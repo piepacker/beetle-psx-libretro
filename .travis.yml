@@ -1,32 +1,59 @@
-language: generic
-os: linux
-dist: trusty
-sudo: required
-addons:
-  apt:
-    packages:
-      - g++-7
-    sources:
-      - ubuntu-toolchain-r-test
-env:
-  global:
-    - COMPILER_NAME=gcc CXX=g++-7 CC=gcc-7
-  matrix:
-    - PLATFORM=linux_x64 CORE=mednafen_psx
-    - PLATFORM=linux_x64 CORE=mednafen_psx_hw
-before_script:
-  - pwd
-  - mkdir -p ~/bin
-  - ln -s /usr/bin/gcc-7 ~/bin/gcc
-  - ln -s /usr/bin/g++-7 ~/bin/g++
-  - ln -s /usr/bin/cpp-7 ~/bin/cpp
-  - export PATH=~/bin:$PATH
-  - ls -l ~/bin
-  - echo $PATH
-  - g++-7 --version
-  - g++ --version
-script:
-  - cd ~/
-  - git clone --depth=50 https://github.com/libretro/libretro-super
-  - cd libretro-super/travis
-  - ./build.sh
+branches:
+  only:
+  - master
+  - "/^v.*$/"
+language: cpp
+matrix:
+  include:
+  - name: Linux x86_64
+    dist: bionic
+    script:
+    - make -j 4
+    - zip mednafen_psx-Linux-x86_64.zip mednafen_psx_libretro.so
+  - name: Linux arm64
+    dist: bionic
+    arch: arm64
+    before_install:
+    - sudo apt-get install zip
+    script:
+    - make -j 4
+    - zip mednafen_psx-Linux-arm64.zip mednafen_psx_libretro.so
+  - name: Linux armv7 neon
+    dist: bionic
+    services:
+    - docker
+    before_install:
+    - sudo apt-get install zip
+    script:
+    - docker pull dockcross/linux-armv7
+    - docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp dockcross/linux-armv7
+      make platform=unix-armv-neon-hardfloat -j 4
+    - zip mednafen_psx-Linux-arm.zip mednafen_psx_libretro.so
+  - name: OSX x86_64
+    os: osx
+    osx_image: xcode11.2
+    script:
+    - make -j 4
+    - zip mednafen_psx-OSX-x86_64.zip mednafen_psx_libretro.dylib
+  - name: Windows x86_64
+    os: windows
+    before_install:
+    - choco install make --ignore-checksums
+    script:
+    - make platform=win -j 4
+    - 7z a mednafen_psx-Windows-x86_64.zip mednafen_psx_libretro.dll
+deploy:
+  skip_cleanup: true
+  provider: releases
+  api_key:
+    secure: Eu4WTghXkz9wYf2vPJOFBkm78EX/ApLzqvIce2lAMmBsRZSVitHXUrQXQpGhlsgA1Axun4beEy6e6PcMAYEtAz/sJXv6HP50khdzxhbH1Whg6WFjYcCkuXWYM+EIfqK5qoDluPh25Zobm5BFLoNyWz4CAa+3NvQiZadOV1uEf86SYDjXw4GyQyPAG4znI2dIYJwVQcvp9USIa0dR/fN94SEpqrYfxeqoHuQaM0nKL+4KtuvPApms0fxvZyAw/vBZktdcigpIlgrNdVPQT5bntVlk/6XMlPnaxgWwCA4u2yLXame1Gq08vdpE4HrpKbgYAGpqiu4gfCqbu7OBOhVN5MnxhCud5YdW6lJyHPrr9lUmLLkcjtOqVrdk/fk1kDxv37duovElup20M3uMv2nJhUQEUMItwB/zJv8gJS/93F3tpsbs4dL8ILzB2VJ0Eug3Mxkdv/Gz3odjmfS9ZcVp/0VmBiOUsAFbwMRUBUjMP8b8J5AJ6oKzm9Vhz0DspNSsgxjvS91DJ623UGikra0n/WjBHHDpSdkHguDDN//1ThYggybEoYBFn5/x1tcJ+e+bThbbx7uCUnOR7uPPFppUEuWF9HsKlQsShu6IYVI4Kw/cyZDPfDh/vmAMWH32D2gJUpRQvMH5YT07WD8VrbiyliIBJuKdaKBQ/nNa4+Amw2M=
+  file:
+  - mednafen_psx-Linux-x86_64.zip
+  - mednafen_psx-Linux-arm64.zip
+  - mednafen_psx-Linux-arm.zip
+  - mednafen_psx-OSX-x86_64.zip
+  - mednafen_psx-Windows-x86_64.zip
+  on:
+    repo: piepacker/mednafen_psx
+    tags: true
+
