@@ -202,7 +202,8 @@ static bool SubWrite(StateMem *st, SFORMAT *sf, const char *name_prefix)
        * Don't do it if we're only saving the raw data. */
       if(sf->flags & MDFNSTATE_BOOL)
       {
-         for(int32_t bool_monster = 0; bool_monster < bytesize; bool_monster++)
+         int32_t bool_monster;
+         for(bool_monster = 0; bool_monster < bytesize; bool_monster++)
          {
             uint8_t tmp_bool = ((bool *)sf->v)[bool_monster];
             smem_write(st, &tmp_bool, 1);
