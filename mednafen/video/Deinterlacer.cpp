@@ -7,7 +7,7 @@
 extern "C" uint8_t psx_gpu_upscale_shift;
 
 #include "Deinterlacer.h"
-Deinterlacer::Deinterlacer() : FieldBuffer(NULL), StateValid(false), DeintType(DEINT_WEAVE)
+Deinterlacer::Deinterlacer() : FieldBuffer(NULL), StateValid(false), DeintType(DEINT_BOB)
 {
  PrevDRect.x = 0;
  PrevDRect.y = 0;
