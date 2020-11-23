@@ -6,11 +6,10 @@ extern "C" {
 #endif
 
 #include <stddef.h>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
 
-static INLINE void clamp(int32_t *val, ssize_t min, ssize_t max)
+// Uses intmax_t instead of non-standard ssize_t
+
+static INLINE void clamp(int32_t *val, intmax_t min, intmax_t max)
 {
    if(*val < min)
       *val = min;
