@@ -29,6 +29,8 @@
 #define PSXHLE_LOG(...)
 #endif
 
+#if 0
+
 static void hleDummy() {
 	psxRegs.pc = psxRegs.GPR.n.ra;
 
@@ -100,3 +102,5 @@ void (*psxHLEt[256])() = {
 	hleBootstrap, hleExecRet,
 	hleDummy, hleDummy
 };
+
+#endif 

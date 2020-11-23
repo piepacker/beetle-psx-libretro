@@ -110,7 +110,7 @@ class PS_CPU
  void lightrec_plugin_clear(uint32 addr, uint32 size);
 #endif
 
- private:
+ public:
 
  uint32 GPR[32 + 1];	// GPR[32] Used as dummy in load delay simulation(indexing past the end of real GPR)
 

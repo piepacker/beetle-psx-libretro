@@ -20,19 +20,9 @@
 #ifndef __PSXBIOS_H__
 #define __PSXBIOS_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "psxcommon.h"
-#include "r3000a.h"
-#include "psxmem.h"
-#include "misc.h"
-#include "sio.h"
-
-extern char *biosA0n[256];
-extern char *biosB0n[256];
-extern char *biosC0n[256];
+extern const char *biosA0n[256];
+extern const char *biosB0n[256];
+extern const char *biosC0n[256];
 
 void psxBiosInit();
 void psxBiosShutdown();
@@ -43,9 +33,4 @@ extern void (*biosA0[256])();
 extern void (*biosB0[256])();
 extern void (*biosC0[256])();
 
-extern boolean hleSoftCall;
-
-#ifdef __cplusplus
-}
-#endif
 #endif
