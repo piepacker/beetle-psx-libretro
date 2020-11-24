@@ -23,11 +23,18 @@
 
 // TODO: implement all system calls, count the exact CPU cycles of system calls.
 
-#include "mednafen/psx/psx.h"
 #include "psxbios.h"
 #include <zlib.h>
 
 #include <cstdint>
+
+#define HLE_ENABLE_RCNT			0
+#define HLE_ENABLE_PAD			0
+#define HLE_ENABLE_FILEIO		0
+#define HLE_ENABLE_MCD			0
+#define HLE_ENABLE_FILEIO		0
+#define HLE_ENABLE_LOADEXEC		0
+#define HLE_ENABLE_GPU			0
 
 
 using u32 = uint32_t;
@@ -189,6 +196,8 @@ const char *biosC0n[256] = {
 #endif
 
 #if HLE_MEDNEFEN_IFC
+#include "mednafen/psx/psx.h"
+
 #define GPR_ARRAY (PSX_CPU->GPR)
 #define pc0 (PSX_CPU->BACKED_PC)
 #define lo  (PSX_CPU->LO)
@@ -1176,7 +1185,7 @@ void psxBios_format() { // 0x41
  *	long Load(char *name, struct EXEC *header);
  */
 
-#if 0
+#if HLE_ENABLE_LOADEXEC
 void psxBios_Load() { // 0x42
 	EXE_HEADER eheader;
 	void *pa1;
@@ -1239,7 +1248,7 @@ void psxBios_FlushCache() { // 44
 	pc0 = ra;
 }
 
-#if 0
+#if HLE_ENABLE_GPU
 void psxBios_GPU_dw() { // 0x46
 	int size;
 	s32 *ptr;
@@ -2635,6 +2644,7 @@ void psxBiosInit() {
 //*******************B0 CALLS****************************
 	//biosB0[0x00] = psxBios_SysMalloc;
 	//biosB0[0x01] = psxBios_sys_b0_01;
+
 #if HLE_ENABLE_RCNT
 	biosB0[0x02] = psxBios_SetRCnt;
 	biosB0[0x03] = psxBios_GetRCnt;
