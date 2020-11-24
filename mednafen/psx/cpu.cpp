@@ -30,9 +30,9 @@
 #include "../mednafen-endian.h"
 
 // iCB: PGXP STUFF
-#include "../pgxp/pgxp_cpu.h"
-#include "../pgxp/pgxp_gte.h"
-#include "../pgxp/pgxp_main.h"
+#include "../../pgxp/pgxp_cpu.h"
+#include "../../pgxp/pgxp_gte.h"
+#include "../../pgxp/pgxp_main.h"
 int pgxpMode = PGXP_GetModes();
 
 #ifdef HAVE_LIGHTREC

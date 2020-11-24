@@ -25,8 +25,8 @@
 
 #include "../math_ops.h"
 #include "../state_helpers.h"
-#include "../pgxp/pgxp_gte.h"
-#include "../pgxp/pgxp_main.h"
+#include "../../pgxp/pgxp_gte.h"
+#include "../../pgxp/pgxp_main.h"
 
 extern bool psx_gte_overclock;
 

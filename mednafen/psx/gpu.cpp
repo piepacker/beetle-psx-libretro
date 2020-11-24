@@ -23,9 +23,9 @@
 #include "../state_helpers.h"
 #include "../../rsx/rsx_intf.h"
 
-#include "../pgxp/pgxp_main.h"
-#include "../pgxp/pgxp_gpu.h"
-#include "../pgxp/pgxp_mem.h"
+#include "../../pgxp/pgxp_main.h"
+#include "../../pgxp/pgxp_gpu.h"
+#include "../../pgxp/pgxp_mem.h"
 
 #include "gpu_common.h"
 

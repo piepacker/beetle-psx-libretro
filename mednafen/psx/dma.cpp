@@ -22,7 +22,7 @@
 
 #include "../state_helpers.h"
 
-#include "../pgxp/pgxp_mem.h"
+#include "../../pgxp/pgxp_mem.h"
 
 /* Notes:
 
