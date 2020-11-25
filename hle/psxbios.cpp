@@ -35,7 +35,10 @@
 #define HLE_ENABLE_FILEIO		0
 #define HLE_ENABLE_LOADEXEC		0
 #define HLE_ENABLE_GPU			0
-
+#define HLE_ENABLE_THREAD       0
+#define HLE_ENABLE_ENTRYINT     0
+#define HLE_ENABLE_HEAP         0
+#define HLE_ENABLE_EVENT        0
 
 using u32 = uint32_t;
 using s32 = int32_t;
@@ -359,12 +362,22 @@ typedef struct {
 	u32  mcfile;
 } FileDesc;
 
+#if HLE_ENABLE_ENTRYINT
 static u32 *jmp_int = NULL;
+static u32 SysIntRP[8];
+#endif
+
+#if HLE_ENABLE_PAD
 static int *pad_buf = NULL;
 static char *pad_buf1 = NULL, *pad_buf2 = NULL;
 static int pad_buf1len, pad_buf2len;
+static int CardState = -1;
+static u32 card_active_chan;
+#endif
 
 static u32 regs[36];
+
+#if HLE_ENABLE_EVENT
 static EvCB *Event;
 static EvCB *HwEV; // 0xf0
 static EvCB *EvEV; // 0xf1
@@ -372,14 +385,19 @@ static EvCB *RcEV; // 0xf2
 static EvCB *UeEV; // 0xf3
 static EvCB *SwEV; // 0xf4
 static EvCB *ThEV; // 0xff
-static u32 *heap_addr = NULL;
-static u32 *heap_end = NULL;
-static u32 SysIntRP[8];
-static int CardState = -1;
+#endif
+
+#if HLE_ENABLE_THREAD
 static TCB Thread[8];
 static int CurThread = 0;
+#endif
+
+#if HLE_ENABLE_HEAP
+static u32 *heap_addr = NULL;
+static u32 *heap_end = NULL;
+#endif
+
 static FileDesc FDesc[32];
-static u32 card_active_chan;
 
 int hleSoftCall = FALSE;
 
@@ -411,6 +429,7 @@ static inline void softCall2(u32 pc) {
 #endif
 }
 
+#if HLE_ENABLE_EVENT
 static inline void DeliverEvent(u32 ev, u32 spec) {
 	if (Event[ev][spec].status != EvStACTIVE) return;
 
@@ -419,6 +438,7 @@ static inline void DeliverEvent(u32 ev, u32 spec) {
 		softCall2(Event[ev][spec].fhandler);
 	} else Event[ev][spec].status = EvStALREADY;
 }
+#endif
 
 
 static inline void SaveRegs() {
@@ -929,6 +949,7 @@ void psxBios_qsort() { // 0x31
 	pc0 = ra;
 }
 
+#if HLE_ENABLE_HEAP
 void psxBios_malloc() { // 0x33
 	unsigned int *chunk, *newchunk = NULL;
 	unsigned int dsize = 0, csize, cstat;
@@ -1071,6 +1092,7 @@ void psxBios_InitHeap() { // 0x39
 
 	pc0 = ra;
 }
+#endif
 
 void psxBios_getchar() { //0x3b
 	v0 = getchar(); pc0 = ra;
@@ -1355,6 +1377,7 @@ void psxBios_LoadExec() { // 51
 }
 #endif
 
+#if HLE_ENABLE_EVENT
 void psxBios__bu_init() { // 70
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosA0n[0x70]);
@@ -1365,6 +1388,7 @@ void psxBios__bu_init() { // 70
 
 	pc0 = ra;
 }
+#endif
 
 void psxBios__96_init() { // 71
 #ifdef PSXBIOS_LOG
@@ -1411,6 +1435,7 @@ void psxBios_SetMem() { // 9f
 }
 #endif
 
+#if HLE_ENABLE_EVENT
 void psxBios__card_info() { // ab
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s: %x\n", biosA0n[0xab], a0);
@@ -1436,6 +1461,7 @@ void psxBios__card_load() { // ac
 
 	v0 = 1; pc0 = ra;
 }
+#endif
 
 /* System calls B0 */
 
@@ -1509,6 +1535,8 @@ void psxBios_ResetRCnt() { // 06
 }
 #endif
 
+
+#if HLE_ENABLE_EVENT
 /* gets ev for use with Event */
 #define GetEv() \
 	ev = (a0 >> 24) & 0xf; \
@@ -1638,7 +1666,10 @@ void psxBios_DisableEvent() { // 0d
 
 	v0 = 1; pc0 = ra;
 }
+#endif
 
+
+#if HLE_ENABLE_THREAD
 /*
  *	long OpenTh(long (*func)(), unsigned long sp, unsigned long gp);
  */
@@ -1712,7 +1743,10 @@ void psxBios_ChangeTh() { // 10
 		CurThread = th;
 	}
 }
+#endif
 
+
+#if HLE_ENABLE_PAD
 void psxBios_InitPAD() { // 0x12
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x12]);
@@ -1726,8 +1760,6 @@ void psxBios_InitPAD() { // 0x12
 	v0 = 1; pc0 = ra;
 }
 
-
-#if HLE_ENABLE_PAD
 void psxBios_StartPAD() { // 13
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x13]);
@@ -1778,6 +1810,7 @@ void psxBios_ReturnFromException() { // 17
 			    ((CP0_STATUS & 0x3c) >> 2);
 }
 
+#if HLE_ENABLE_ENTRYINT
 void psxBios_ResetEntryInt() { // 18
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x18]);
@@ -1795,7 +1828,9 @@ void psxBios_HookEntryInt() { // 19
 	jmp_int = (u32*)Ra0;
 	pc0 = ra;
 }
+#endif
 
+#if HLE_ENABLE_EVENT
 void psxBios_UnDeliverEvent() { // 0x20
 	int ev, spec;
 	int i;
@@ -1813,6 +1848,7 @@ void psxBios_UnDeliverEvent() { // 0x20
 
 	pc0 = ra;
 }
+#endif
 
 #if HLE_ENABLE_FILEIO
 #define buopen(mcd) { \
@@ -2339,6 +2375,7 @@ void psxBios_GetB0Table() { // 57
 	v0 = 0x874; pc0 = ra;
 }
 
+#if HLE_ENABLE_MCD
 void psxBios__card_chan() { // 0x58
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x58]);
@@ -2347,6 +2384,7 @@ void psxBios__card_chan() { // 0x58
 	v0 = card_active_chan;
 	pc0 = ra;
 }
+#endif
 
 void psxBios_ChangeClearPad() { // 5b
 #ifdef PSXBIOS_LOG
@@ -2367,6 +2405,7 @@ void psxBios__card_status() { // 5c
 
 /* System calls C0 */
 
+#if HLE_ENABLE_ENTRYINT
 /*
  * int SysEnqIntRP(int index , long *queue);
  */
@@ -2394,6 +2433,7 @@ void psxBios_SysDeqIntRP() { // 03
 
 	v0 = 0; pc0 = ra;
 }
+#endif
 
 void psxBios_ChangeClearRCnt() { // 0a
 	u32 *ptr;
@@ -2410,43 +2450,32 @@ void psxBios_ChangeClearRCnt() { // 0a
 	pc0 = ra;
 }
 
-void psxBios_dummy() { 
-#ifdef PSXBIOS_LOG
-	PSXBIOS_LOG("unk %x call: %x\n", pc0 & 0x1fffff, t1);
-#endif
-	pc0 = ra; 
-}
+using VoidFunc = void (*)();
 
-void (*biosA0[256])();
-void (*biosB0[256])();
-void (*biosC0[256])();
+using HLE_BIOS_TABLE = VoidFunc[256]; 
+
+HLE_BIOS_TABLE biosA0 = {};
+HLE_BIOS_TABLE biosB0 = {};
+HLE_BIOS_TABLE biosC0 = {};
 
 #include "sjisfont.h"
 
-void psxBiosInit() {
-	u32 base, size;
-	u32 *ptr; 
-	int i;
-	uLongf len;
-
-	for(i = 0; i < 256; i++) {
+void psxBiosResetToNone() {
+	for(int i = 0; i < 256; i++) {
 		biosA0[i] = NULL;
 		biosB0[i] = NULL;
 		biosC0[i] = NULL;
 	}
+}
+
+void psxBiosInit_StdLib() {
+	int i;
+
 	biosA0[0x3e] = psxBios_puts;
 	biosA0[0x3f] = psxBios_printf;
 
 	biosB0[0x3d] = psxBios_putchar;
 	biosB0[0x3f] = psxBios_puts;
-
-//	if (!Config.HLE) return;
-
-	for(i = 0; i < 256; i++) {
-		if (biosA0[i] == NULL) biosA0[i] = psxBios_dummy;
-		if (biosB0[i] == NULL) biosB0[i] = psxBios_dummy;
-		if (biosC0[i] == NULL) biosC0[i] = psxBios_dummy;
-	}
 
 #if HLE_ENABLE_FILEIO
 	biosA0[0x00] = psxBios_open;
@@ -2502,6 +2531,8 @@ void psxBiosInit() {
 	biosA0[0x30] = psxBios_srand;
 	biosA0[0x31] = psxBios_qsort;
 	//biosA0[0x32] = psxBios_strtod;
+
+#if HLE_ENABLE_HEAP
 	biosA0[0x33] = psxBios_malloc;
 	biosA0[0x34] = psxBios_free;
 	//biosA0[0x35] = psxBios_lsearch;
@@ -2509,10 +2540,21 @@ void psxBiosInit() {
 	biosA0[0x37] = psxBios_calloc;
 	biosA0[0x38] = psxBios_realloc;
 	biosA0[0x39] = psxBios_InitHeap;
+#endif
+
 	//biosA0[0x3a] = psxBios__exit;
 	biosA0[0x3b] = psxBios_getchar;
 	biosA0[0x3c] = psxBios_putchar;	
 	//biosA0[0x3d] = psxBios_gets;
+
+	biosB0[0x17] = psxBios_ReturnFromException;
+
+	biosB0[0x56] = psxBios_GetC0Table;
+	biosB0[0x57] = psxBios_GetB0Table;
+}
+
+void psxBiosInitFull() {
+
 	//biosA0[0x40] = psxBios_sys_a0_40;
 	//biosA0[0x41] = psxBios_LoadTest;
 
@@ -2568,7 +2610,11 @@ void psxBiosInit() {
 	//biosA0[0x6d] = psxBios_dev_card_format;
 	//biosA0[0x6e] = psxBios_dev_card_rename;
 	//biosA0[0x6f] = psxBios_dev_card_6f;
+
+#if HLE_ENABLE_EVENT
 	biosA0[0x70] = psxBios__bu_init;
+#endif
+
 	biosA0[0x71] = psxBios__96_init;
 	biosA0[0x72] = psxBios__96_remove;
 	//biosA0[0x73] = psxBios_sys_a0_73;
@@ -2631,9 +2677,11 @@ void psxBiosInit() {
 	//biosA0[0xa8] = psxBios_bufs_cb_1;
 	//biosA0[0xa9] = psxBios_bufs_cb_2;
 	//biosA0[0xaa] = psxBios_bufs_cb_3;
+#if HLE_ENABLE_EVENT
 	biosA0[0xab] = psxBios__card_info;
 	biosA0[0xac] = psxBios__card_load;
-	//biosA0[0axd] = psxBios__card_auto;
+#endif
+    //biosA0[0axd] = psxBios__card_auto;
 	//biosA0[0xae] = psxBios_bufs_cd_4;
 	//biosA0[0xaf] = psxBios_sys_a0_af;
 	//biosA0[0xb0] = psxBios_sys_a0_b0;
@@ -2652,6 +2700,8 @@ void psxBiosInit() {
 	biosB0[0x05] = psxBios_StopRCnt;
 	biosB0[0x06] = psxBios_ResetRCnt;
 #endif
+
+#if HLE_ENABLE_THREAD
 	biosB0[0x07] = psxBios_DeliverEvent;
 	biosB0[0x08] = psxBios_OpenEvent;
 	biosB0[0x09] = psxBios_CloseEvent;
@@ -2663,6 +2713,8 @@ void psxBiosInit() {
 	biosB0[0x0f] = psxBios_CloseTh;
 	biosB0[0x10] = psxBios_ChangeTh;
 	//biosB0[0x11] = psxBios_psxBios_b0_11;
+	biosB0[0x20] = psxBios_UnDeliverEvent;
+#endif
 
 #if HLE_ENABLE_PAD
 	biosB0[0x12] = psxBios_InitPAD;
@@ -2670,7 +2722,9 @@ void psxBiosInit() {
 	biosB0[0x14] = psxBios_StopPAD;
 	biosB0[0x15] = psxBios_PAD_init;
 	biosB0[0x16] = psxBios_PAD_dr;
-	biosB0[0x17] = psxBios_ReturnFromException;
+#endif
+
+#if HLE_ENABLE_ENTRYINT
 	biosB0[0x18] = psxBios_ResetEntryInt;
 	biosB0[0x19] = psxBios_HookEntryInt;
 #endif
@@ -2681,7 +2735,6 @@ void psxBiosInit() {
 	//biosB0[0x1d] = psxBios_sys_b0_1d;
 	//biosB0[0x1e] = psxBios_sys_b0_1e;
 	//biosB0[0x1f] = psxBios_sys_b0_1f;
-	biosB0[0x20] = psxBios_UnDeliverEvent;
 	//biosB0[0x21] = psxBios_sys_b0_21;
 	//biosB0[0x22] = psxBios_sys_b0_22;
 	//biosB0[0x23] = psxBios_sys_b0_23;
@@ -2741,9 +2794,11 @@ void psxBiosInit() {
 	//biosB0[0x53] = psxBios_sys_b0_53;
 	//biosB0[0x54] = psxBios__get_errno;
 	//biosB0[0x55] = psxBios__get_error;
-	biosB0[0x56] = psxBios_GetC0Table;
-	biosB0[0x57] = psxBios_GetB0Table;
+
+#if HLE_ENABLE_MCD
 	biosB0[0x58] = psxBios__card_chan;
+#endif
+
 	//biosB0[0x59] = psxBios_sys_b0_59;
 	//biosB0[0x5a] = psxBios_sys_b0_5a;
 	biosB0[0x5b] = psxBios_ChangeClearPad;
@@ -2752,8 +2807,12 @@ void psxBiosInit() {
 //*******************C0 CALLS****************************
 	//biosC0[0x00] = psxBios_InitRCnt;
 	//biosC0[0x01] = psxBios_InitException;
+
+#if HLE_ENABLE_ENTRYINT
 	biosC0[0x02] = psxBios_SysEnqIntRP;
 	biosC0[0x03] = psxBios_SysDeqIntRP;
+#endif
+
 	//biosC0[0x04] = psxBios_get_free_EvCB_slot;
 	//biosC0[0x05] = psxBios_get_free_TCB_slot;
 	//biosC0[0x06] = psxBios_ExceptionHandler;
@@ -2781,6 +2840,13 @@ void psxBiosInit() {
 	//biosC0[0x1c] = psxBios_PatchAOTable;
 //************** THE END ***************************************
 /**/
+
+
+#if HLE_ENABLE_EVENT
+	u32 base;
+    int size;
+	uLongf len;
+
 	base = 0x1000;
 	size = sizeof(EvCB) * 32;
 	Event = (EvCB *)(PSX_ROM_START + base); base += size * 6;
@@ -2791,26 +2857,40 @@ void psxBiosInit() {
 	UeEV = Event + 32 * 3;
 	SwEV = Event + 32 * 4;
 	ThEV = Event + 32 * 5;
+#endif
 
-	ptr = (u32 *)PSXM(0x0874); // b0 table
+    // I'm not quite sure what this is about ... it's modifying the B0/C0 table stuff, but why? --jstine
+
+	auto* ptr = (u32 *)PSXM(0x0874); // b0 table
 	ptr[0] = SWAPu32(0x4c54 - 0x884);
 
 	ptr = (u32 *)PSXM(0x0674); // c0 table
 	ptr[6] = SWAPu32(0xc80);
 
-	memset(SysIntRP, 0, sizeof(SysIntRP));
+#if HLE_ENABLE_THREAD
 	memset(Thread, 0, sizeof(Thread));
 	Thread[0].status = 2; // main thread
+	CurThread = 0;
+#endif
 
+#if HLE_ENABLE_ENTRYINT
+	memset(SysIntRP, 0, sizeof(SysIntRP));
 	jmp_int = NULL;
+#endif
+
+#if HLE_ENABLE_PAD
 	pad_buf = NULL;
 	pad_buf1 = NULL;
 	pad_buf2 = NULL;
 	pad_buf1len = pad_buf2len = 0;
+	CardState = -1;
+#endif
+
+#if HLE_ENABLE_HEAP
 	heap_addr = NULL;
 	heap_end = NULL;
-	CardState = -1;
-	CurThread = 0;
+#endif
+
 	memset(FDesc, 0, sizeof(FDesc));
 
 	psxMu32ref(0x0150) = SWAPu32(0x160);
@@ -2842,6 +2922,7 @@ void psxBiosInit() {
 	psxMu32ref(0x9010) = SWAPu32(0xac20cc00);
 
 	// fonts
+    uLongf len;
 	len = 0x80000 - 0x66000;
 	uncompress((Bytef *)(PSX_ROM_START + 0x66000), &len, font_8140, sizeof(font_8140));
 	len = 0x80000 - 0x69d68;
@@ -2969,7 +3050,7 @@ void biosInterrupt() {
 }
 #endif 
 
-#if 0
+#if HLE_ENABLE_ENTRYINT
 void psxBiosException() {
 	int i;
 
@@ -3046,6 +3127,22 @@ void psxBiosException() {
 						  ((psxRegs.CP0.n.Status & 0x3c) >> 2);
 }
 #endif
+
+bool psxbios_invoke_any(const HLE_BIOS_TABLE& table) {
+	int call = t1 & 0xff;
+
+	if (table[call]) {
+		table[call]();
+		return 1;
+	}
+
+	return 0;
+}
+
+bool psxbios_invoke_A0() { return psxbios_invoke_any(biosA0); }
+bool psxbios_invoke_B0() { return psxbios_invoke_any(biosB0); }
+bool psxbios_invoke_C0() { return psxbios_invoke_any(biosC0); }
+
 
 // SAVESTATE
 
