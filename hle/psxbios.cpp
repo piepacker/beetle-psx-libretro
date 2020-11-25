@@ -441,19 +441,6 @@ static inline void DeliverEvent(u32 ev, u32 spec) {
 #endif
 
 
-static inline void SaveRegs() {
-	memcpy(regs, PSX_CPU->GPR, sizeof(PSX_CPU->GPR));
-	regs[33] = lo;
-	regs[34] = hi;
-	regs[35] = pc0;
-}
-
-static inline void LoadRegs() {
-	memcpy(PSX_CPU->GPR, regs, sizeof(PSX_CPU->GPR));
-	lo = regs[33];
-	hi = regs[34];
-}
-
 /*                                           *
 //                                           *
 //                                           *
@@ -1800,6 +1787,20 @@ void psxBios_PAD_dr() { // 16
 }
 #endif
 
+#if HLE_ENABLE_ENTRYINT
+static inline void SaveRegs() {
+	memcpy(regs, PSX_CPU->GPR, sizeof(PSX_CPU->GPR));
+	regs[33] = lo;
+	regs[34] = hi;
+	regs[35] = pc0;
+}
+
+static inline void LoadRegs() {
+	memcpy(PSX_CPU->GPR, regs, sizeof(PSX_CPU->GPR));
+	lo = regs[33];
+	hi = regs[34];
+}
+
 void psxBios_ReturnFromException() { // 17
 	LoadRegs();
 
@@ -1810,7 +1811,6 @@ void psxBios_ReturnFromException() { // 17
 			    ((CP0_STATUS & 0x3c) >> 2);
 }
 
-#if HLE_ENABLE_ENTRYINT
 void psxBios_ResetEntryInt() { // 18
 #ifdef PSXBIOS_LOG
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x18]);
@@ -2547,8 +2547,6 @@ void psxBiosInit_StdLib() {
 	biosA0[0x3c] = psxBios_putchar;	
 	//biosA0[0x3d] = psxBios_gets;
 
-	biosB0[0x17] = psxBios_ReturnFromException;
-
 	biosB0[0x56] = psxBios_GetC0Table;
 	biosB0[0x57] = psxBios_GetB0Table;
 }
@@ -2809,6 +2807,7 @@ void psxBiosInitFull() {
 	//biosC0[0x01] = psxBios_InitException;
 
 #if HLE_ENABLE_ENTRYINT
+	biosB0[0x17] = psxBios_ReturnFromException;
 	biosC0[0x02] = psxBios_SysEnqIntRP;
 	biosC0[0x03] = psxBios_SysDeqIntRP;
 #endif

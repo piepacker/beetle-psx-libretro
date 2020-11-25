@@ -734,6 +734,7 @@ extern bool psxbios_invoke_C0();
     {
       if(psxbios_invoke_A0()) {
         PC = GPR[31];
+        new_PC = PC + 4;
       }
     }
 
@@ -741,6 +742,7 @@ extern bool psxbios_invoke_C0();
     {
       if(psxbios_invoke_B0()) {
         PC = GPR[31];
+        new_PC = PC + 4;
       }
     }
 
@@ -748,6 +750,7 @@ extern bool psxbios_invoke_C0();
     {
       if(psxbios_invoke_C0()) {
         PC = GPR[31];
+        new_PC = PC + 4;
       }
     }
 

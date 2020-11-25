@@ -1186,6 +1186,9 @@ uint32_t PSX_MemPeek32(uint32_t A)
    return MemPeek<uint32, false>(0, A);
 }
 
+extern void psxBiosInit_StdLib();
+extern void psxBiosInitFull();
+
 // FIXME: Add PSX_Reset() and FrontIO::Reset() so that emulated input devices don't get power-reset on reset-button reset.
 static void PSX_Power(void)
 {
@@ -1222,6 +1225,8 @@ static void PSX_Power(void)
    IRQ_Power();
 
    ForceEventUpdates(0);
+
+   psxBiosInit_StdLib();
 }
 
 template<typename T, bool Access24> static INLINE void MemPoke(pscpu_timestamp_t timestamp, uint32 A, T V)
