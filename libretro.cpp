@@ -1227,6 +1227,7 @@ static void PSX_Power(void)
    ForceEventUpdates(0);
 
    psxBiosInit_StdLib();
+   psxBiosInitFull();
 }
 
 template<typename T, bool Access24> static INLINE void MemPoke(pscpu_timestamp_t timestamp, uint32 A, T V)
@@ -4137,8 +4138,27 @@ void retro_unload_game(void)
 static uint64_t video_frames, audio_frames;
 #define SOUND_CHANNELS 2
 
+static bool isDebugAttached = false;
+
 void retro_run(void)
 {
+    if (const char* env = getenv("LUDO_ATTACH")) {
+        if (env[0] && env[0] == '1') {
+            if(!::IsDebuggerPresent()) {
+                if (isDebugAttached) {
+                    exit(0);
+                }
+                else {
+                    ::Sleep( 100 ); // to avoid 100% CPU load
+                    return;
+                }
+            }
+
+            isDebugAttached = 1;        // if debugger detaches, the process will close itself...
+        }
+    }
+
+
    bool updated = false;
    //code to implement audio and video disable is not yet implemented
    //bool disableVideo = false;
