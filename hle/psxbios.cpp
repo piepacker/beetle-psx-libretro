@@ -42,9 +42,9 @@
 #define HLE_ENABLE_MCD			0
 #define HLE_ENABLE_LOADEXEC		0
 #define HLE_ENABLE_GPU			0
-#define HLE_ENABLE_THREAD       0
+#define HLE_ENABLE_THREAD       1
 #define HLE_ENABLE_ENTRYINT     0
-#define HLE_ENABLE_HEAP         0
+#define HLE_ENABLE_HEAP         1
 #define HLE_ENABLE_EVENT        0
 #define HLE_ENABLE_EMPTY_ROM    0
 
@@ -1098,89 +1098,161 @@ void psxBios_InitHeap() { // 0x39
 }
 #endif
 
+// stdoutbuf is not strictly necessary - we chould use native putc instead.
+// But it can be helpful as a rule, especially if the emulator becomes threaded/asyncronous later.
+// It keeps PSX stdout from corrupting logging coming from other threads.
+//
+// currently not handled by savesatate but also only user-facing (won't affect state determininism)
+// Recommended savestate behavior is to simply ensure this is initialized to 0.
+static std::string stdoutbuf;
+
+static void raw_putc(char c) {
+   	if (c == '\n') {
+		if (!stdoutbuf.empty()) {
+			SysPrintf("STDOUT: %s\n", stdoutbuf.c_str());
+		}
+
+		stdoutbuf.clear();
+	}
+	else {
+		if (c != '\r') {
+			stdoutbuf += c;
+		}
+	}
+}
+
+static void raw_puts(const char* cstr) {
+	if (!cstr) return;
+
+	if (!cstr[0]) {
+		// game putting out an intentionally-blank line
+		SysPrintf("STDOUT: \n");
+		return;
+	}
+	for(const char* eol = cstr; eol[0]; ++eol) {
+		if (eol[0] == '\r') {
+			// ignore 'em
+		}
+		else if (eol[0] == '\n') {
+			SysPrintf("STDOUT: %s\n", stdoutbuf.c_str());
+			stdoutbuf.clear();
+		}
+		else {
+			stdoutbuf += eol[0];
+		}
+	}
+}
+
 void psxBios_getchar() { //0x3b
-	v0 = getchar(); pc0 = ra;
+	v0 = getchar();
+    pc0 = ra;
 }
 
 void psxBios_putchar() { // 3d
-	SysPrintf("%c", (char)a0);
-	pc0 = ra;
+    raw_putc(a0);
 }
 
 void psxBios_puts() { // 3e/3f
-	SysPrintf("%s", Ra0);
+    raw_puts(Ra0);
 	pc0 = ra;
 }
 
 void psxBios_printf() { // 0x3f
-	char tmp[1024];
-	char tmp2[1024];
+    const int t2len = 64;
+	char tmp2[t2len];
+    char ptmp[64];
 	u32 save[4];
-	char *ptmp = tmp;
 	int n=1, i=0, j;
 	void *psp;
 
 	psp = PSXM(sp);
 	if (psp) {
 		memcpy(save, psp, 4 * 4);
-		psxMu32ref(sp) = SWAP32((u32)a0);
-		psxMu32ref(sp + 4) = SWAP32((u32)a1);
-		psxMu32ref(sp + 8) = SWAP32((u32)a2);
+		psxMu32ref(sp + 0 ) = SWAP32((u32)a0);
+		psxMu32ref(sp + 4 ) = SWAP32((u32)a1);
+		psxMu32ref(sp + 8 ) = SWAP32((u32)a2);
 		psxMu32ref(sp + 12) = SWAP32((u32)a3);
 	}
 
-	while (Ra0[i]) {
-		switch (Ra0[i]) {
-			case '%':
-				j = 0;
-				tmp2[j++] = '%';
-_start:
-				switch (Ra0[++i]) {
-					case '.':
-					case 'l':
-						tmp2[j++] = Ra0[i]; goto _start;
-					default:
-						if (Ra0[i] >= '0' && Ra0[i] <= '9') {
-							tmp2[j++] = Ra0[i];
-							goto _start;
-						}
-						break;
-				}
-				tmp2[j++] = Ra0[i];
-				tmp2[j] = 0;
+    const char* fmt = Ra0;
 
-				switch (Ra0[i]) {
-					case 'f': case 'F':
-						ptmp += sprintf(ptmp, tmp2, (float)psxMu32(sp + n * 4)); n++; break;
-					case 'a': case 'A':
-					case 'e': case 'E':
-					case 'g': case 'G':
-						ptmp += sprintf(ptmp, tmp2, (double)psxMu32(sp + n * 4)); n++; break;
-					case 'p':
-					case 'i': case 'u':
-					case 'd': case 'D':
-					case 'o': case 'O':
-					case 'x': case 'X':
-						ptmp += sprintf(ptmp, tmp2, (unsigned int)psxMu32(sp + n * 4)); n++; break;
-					case 'c':
-						ptmp += sprintf(ptmp, tmp2, (unsigned char)psxMu32(sp + n * 4)); n++; break;
-					case 's':
-						ptmp += sprintf(ptmp, tmp2, (char*)PSXM(psxMu32(sp + n * 4))); n++; break;
-					case '%':
-						*ptmp++ = Ra0[i]; break;
-				}
-				i++;
-				break;
-			default:
-				*ptmp++ = Ra0[i++];
+	while (fmt[i]) {
+        if (fmt[i] == '%') {
+            if (fmt[i+1] == '%') {
+                raw_putc('%');
+                ++i; continue;
+            }
+
+			j = 0;
+			tmp2[j++] = '%';
+_start:
+            // safeguiard - if things run past the end of the buffer, give up.
+            if (j > t2len-2) {
+                tmp2[j] = 0;
+                //raw_puts(tmp2);
+        		fprintf(stderr, "Funky printf formatting at 0x%06x, msg=%s\n", a0 & 0x1fff'ffff, fmt);
+                continue;   // resume processing.
+            }
+
+			switch (fmt[++i]) {
+				case '.':
+				case 'l': {
+					tmp2[j++] = fmt[i];
+                } goto _start;
+
+				default: {
+					if (fmt[i] >= '0' && fmt[i] <= '9') {
+						tmp2[j++] = fmt[i];
+						goto _start;
+					}
+			    } break;
+			}
+			tmp2[j++] = fmt[i];
+			tmp2[j] = 0;
+
+			switch (fmt[i]) {
+				case 'f': case 'F':
+					snprintf(ptmp, sizeof(ptmp), tmp2, (float)psxMu32(sp + n * 4)); n++; 
+                    raw_puts(ptmp);
+                break;
+
+				case 'a': case 'A':
+				case 'e': case 'E':
+				case 'g': case 'G':
+					snprintf(ptmp, sizeof(ptmp), tmp2, (double)psxMu32(sp + n * 4)); n++;
+                    raw_puts(ptmp);
+                break;
+
+				case 'p':
+				case 'i': case 'u':
+				case 'd': case 'D':
+				case 'o': case 'O':
+				case 'x': case 'X':
+					snprintf(ptmp, sizeof(ptmp), tmp2, (unsigned int)psxMu32(sp + n * 4)); n++;
+                    raw_puts(ptmp);
+                break;
+
+				case 'c':
+					raw_putc(psxMu32(sp + n * 4)); n++;
+                break;
+
+				case 's':
+					raw_puts((char*)PSXM(psxMu32(sp + n * 4))); n++;
+                break;
+
+				case '%':
+					fprintf(stderr, "Funky printf formatting at 0x%06x, msg=%s\n", a0 & 0x1fff'ffff, fmt);
+                break;
+			}
+			i++;
+        }
+        else {
+            raw_putc(fmt[i++]);
 		}
 	}
-	*ptmp = 0;
 
 	if (psp)
 		memcpy(psp, save, 4 * 4);
-
-	SysPrintf("%s", tmp);
 
 	pc0 = ra;
 }
