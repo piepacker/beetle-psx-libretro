@@ -42,7 +42,7 @@
 #define HLE_ENABLE_MCD			0
 #define HLE_ENABLE_LOADEXEC		0
 #define HLE_ENABLE_GPU			0
-#define HLE_ENABLE_THREAD       0
+#define HLE_ENABLE_THREAD       1
 #define HLE_ENABLE_ENTRYINT     0
 #define HLE_ENABLE_HEAP         1
 #define HLE_ENABLE_EVENT        0
@@ -106,8 +106,7 @@ struct EXE_HEADER {
     u32 SavedGP;
     u32 SavedRA;
     u32 SavedS0;
-} EXE_HEADER;
-
+};
 
 #define SWAPu32(x) (x)
 #define SWAP32(x)  (x)
@@ -2577,10 +2576,21 @@ void psxBiosInitFull() {
 	//biosA0[0xa9] = psxBios_bufs_cb_2;
 	//biosA0[0xaa] = psxBios_bufs_cb_3;
 #if HLE_ENABLE_EVENT
-	biosA0[0x70] = psxBios__bu_init;
-	biosA0[0xab] = psxBios__card_info;
-	biosA0[0xac] = psxBios__card_load;
+    if (hle_config_env_event()) {
+	    biosA0[0x70] = psxBios__bu_init;
+	    biosA0[0xab] = psxBios__card_info;
+	    biosA0[0xac] = psxBios__card_load;
+	    biosB0[0x07] = psxBios_DeliverEvent;
+	    biosB0[0x08] = psxBios_OpenEvent;
+	    biosB0[0x09] = psxBios_CloseEvent;
+	    biosB0[0x0a] = psxBios_WaitEvent;
+	    biosB0[0x0b] = psxBios_TestEvent;
+	    biosB0[0x0c] = psxBios_EnableEvent;
+	    biosB0[0x0d] = psxBios_DisableEvent;
+	    biosB0[0x20] = psxBios_UnDeliverEvent;
+    }
 #endif
+
     //biosA0[0axd] = psxBios__card_auto;
 	//biosA0[0xae] = psxBios_bufs_cd_4;
 	//biosA0[0xaf] = psxBios_sys_a0_af;
@@ -2605,18 +2615,10 @@ void psxBiosInitFull() {
 
 #if HLE_ENABLE_THREAD
     if (hle_config_env_thread()) {
-	    biosB0[0x07] = psxBios_DeliverEvent;
-	    biosB0[0x08] = psxBios_OpenEvent;
-	    biosB0[0x09] = psxBios_CloseEvent;
-	    biosB0[0x0a] = psxBios_WaitEvent;
-	    biosB0[0x0b] = psxBios_TestEvent;
-	    biosB0[0x0c] = psxBios_EnableEvent;
-	    biosB0[0x0d] = psxBios_DisableEvent;
 	    biosB0[0x0e] = psxBios_OpenTh;
 	    biosB0[0x0f] = psxBios_CloseTh;
 	    biosB0[0x10] = psxBios_ChangeTh;
 	    //biosB0[0x11] = psxBios_psxBios_b0_11;
-	    biosB0[0x20] = psxBios_UnDeliverEvent;
     }
 #endif
 
