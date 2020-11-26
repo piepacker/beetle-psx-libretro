@@ -32,7 +32,7 @@
 
 
 #if !defined(PSXBIOS_LOG)
-#   define PSXBIOS_LOG(...) printf(__VA_ARGS__)
+#   define PSXBIOS_LOG(...) (printf(__VA_ARGS__), fflush(nullptr))
 //#   define PSXBIOS_LOG(...) (void(0))
 #endif
 
@@ -42,10 +42,11 @@
 #define HLE_ENABLE_MCD			0
 #define HLE_ENABLE_LOADEXEC		0
 #define HLE_ENABLE_GPU			0
-#define HLE_ENABLE_THREAD       1
+#define HLE_ENABLE_THREAD       0
 #define HLE_ENABLE_ENTRYINT     0
-#define HLE_ENABLE_HEAP         1
+#define HLE_ENABLE_HEAP         0
 #define HLE_ENABLE_EVENT        0
+#define HLE_ENABLE_EMPTY_ROM    0
 
 #include <cstdio>
 
@@ -1504,6 +1505,19 @@ void psxBios_ResetRCnt() { // 06
 	}
 	pc0 = ra;
 }
+
+void psxBios_ChangeClearRCnt() { // 0a
+	u32 *ptr;
+
+	PSXBIOS_LOG("psxBios_%s: %x, %x\n", biosC0n[0x0a], a0, a1);
+
+	ptr = (u32*)PSXM((a0 << 2) + 0x8600);
+	v0 = *ptr;
+	*ptr = a1;
+
+//	psxRegs.CP0.n.Status|= 0x404;
+	pc0 = ra;
+}
 #endif
 
 
@@ -1738,6 +1752,12 @@ void psxBios_PAD_dr() { // 16
 	PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x16]);
 
 	v0 = -1; pc0 = ra;
+}
+
+void psxBios_ChangeClearPad() { // 5b
+	PSXBIOS_LOG("psxBios_%s: %x\n", biosB0n[0x5b], a0);
+
+	pc0 = ra;
 }
 #endif
 
@@ -2296,13 +2316,6 @@ void psxBios__card_chan() { // 0x58
 	v0 = card_active_chan;
 	pc0 = ra;
 }
-#endif
-
-void psxBios_ChangeClearPad() { // 5b
-	PSXBIOS_LOG("psxBios_%s: %x\n", biosB0n[0x5b], a0);
-
-	pc0 = ra;
-}
 
 void psxBios__card_status() { // 5c
    PSXBIOS_LOG("psxBios_%s: %x\n", biosB0n[0x5c], a0);
@@ -2310,6 +2323,8 @@ void psxBios__card_status() { // 5c
    v0 = 1;
    pc0 = ra;
 }
+#endif
+
 
 /* System calls C0 */
 
@@ -2338,19 +2353,6 @@ void psxBios_SysDeqIntRP() { // 03
 	v0 = 0; pc0 = ra;
 }
 #endif
-
-void psxBios_ChangeClearRCnt() { // 0a
-	u32 *ptr;
-
-	PSXBIOS_LOG("psxBios_%s: %x, %x\n", biosC0n[0x0a], a0, a1);
-
-	ptr = (u32*)PSXM((a0 << 2) + 0x8600);
-	v0 = *ptr;
-	*ptr = a1;
-
-//	psxRegs.CP0.n.Status|= 0x404;
-	pc0 = ra;
-}
 
 using VoidFunc = void (*)();
 
@@ -2453,6 +2455,8 @@ void psxBiosInit_StdLib() {
 
 	biosB0[0x56] = psxBios_GetC0Table;
 	biosB0[0x57] = psxBios_GetB0Table;
+
+	biosA0[0x44] = psxBios_FlushCache;
 }
 
 void psxBiosInitFull() {
@@ -2463,9 +2467,10 @@ void psxBiosInitFull() {
 #if HLE_ENABLE_LOADEXEC
 	biosA0[0x42] = psxBios_Load;
 	biosA0[0x51] = psxBios_LoadExec;
-#endif
 	biosA0[0x43] = psxBios_Exec;
-	biosA0[0x44] = psxBios_FlushCache;
+#endif
+
+
 	//biosA0[0x45] = psxBios_InstallInterruptHandler;
 
 #if HLE_ENABLE_GPU
@@ -2513,8 +2518,6 @@ void psxBiosInitFull() {
 	//biosA0[0x6e] = psxBios_dev_card_rename;
 	//biosA0[0x6f] = psxBios_dev_card_6f;
 
-	biosA0[0x71] = psxBios__96_init;
-	biosA0[0x72] = psxBios__96_remove;
 	//biosA0[0x73] = psxBios_sys_a0_73;
 	//biosA0[0x74] = psxBios_sys_a0_74;
 	//biosA0[0x75] = psxBios_sys_a0_75;
@@ -2610,6 +2613,7 @@ void psxBiosInitFull() {
 	    biosB0[0x04] = psxBios_StartRCnt;
 	    biosB0[0x05] = psxBios_StopRCnt;
 	    biosB0[0x06] = psxBios_ResetRCnt;
+    	biosC0[0x0a] = psxBios_ChangeClearRCnt;	
     }
 #endif
 
@@ -2628,6 +2632,7 @@ void psxBiosInitFull() {
 	biosB0[0x14] = psxBios_StopPAD;
 	biosB0[0x15] = psxBios_PAD_init;
 	biosB0[0x16] = psxBios_PAD_dr;
+	biosB0[0x5b] = psxBios_ChangeClearPad;
 #endif
 
 #if HLE_ENABLE_ENTRYINT
@@ -2693,6 +2698,7 @@ void psxBiosInitFull() {
 	biosB0[0x4e] = psxBios__card_write;
 	biosB0[0x4f] = psxBios__card_read;
 	biosB0[0x50] = psxBios__new_card;
+	biosB0[0x5c] = psxBios__card_status;
 #endif
 
 	biosB0[0x51] = psxBios_Krom2RawAdd;
@@ -2707,8 +2713,6 @@ void psxBiosInitFull() {
 
 	//biosB0[0x59] = psxBios_sys_b0_59;
 	//biosB0[0x5a] = psxBios_sys_b0_5a;
-	biosB0[0x5b] = psxBios_ChangeClearPad;
-	biosB0[0x5c] = psxBios__card_status;
 	//biosB0[0x5d] = psxBios__card_wait;
 //*******************C0 CALLS****************************
 	//biosC0[0x00] = psxBios_InitRCnt;
@@ -2726,7 +2730,6 @@ void psxBiosInitFull() {
 	//biosC0[0x07] = psxBios_InstallExeptionHandler;
 	//biosC0[0x08] = psxBios_SysInitMemory;
 	//biosC0[0x09] = psxBios_SysInitKMem;
-	biosC0[0x0a] = psxBios_ChangeClearRCnt;	
 	//biosC0[0x0b] = psxBios_SystemError;
 	//biosC0[0x0c] = psxBios_InitDefInt;
 	//biosC0[0x0d] = psxBios_sys_c0_0d;
@@ -2766,14 +2769,6 @@ void psxBiosInitFull() {
 	ThEV = Event + 32 * 5;
 #endif
 
-    // I'm not quite sure what this is about ... it's modifying the B0/C0 table stuff, but why? --jstine
-
-	auto* ptr = (u32 *)PSXM(0x0874); // b0 table
-	ptr[0] = SWAPu32(0x4c54 - 0x884);
-
-	ptr = (u32 *)PSXM(0x0674); // c0 table
-	ptr[6] = SWAPu32(0xc80);
-
 #if HLE_ENABLE_THREAD
 	memset(Thread, 0, sizeof(Thread));
 	Thread[0].status = 2; // main thread
@@ -2798,48 +2793,69 @@ void psxBiosInitFull() {
 	heap_end = NULL;
 #endif
 
+#if HLE_ENABLE_FILEIO
 	memset(FDesc, 0, sizeof(FDesc));
+#endif
 
-	psxMu32ref(0x0150) = SWAPu32(0x160);
-	psxMu32ref(0x0154) = SWAPu32(0x320);
-	psxMu32ref(0x0160) = SWAPu32(0x248);
-	strcpy((char *)PSXM(0x248), "bu");
-/*	psxMu32ref(0x0ca8) = SWAPu32(0x1f410004);
-	psxMu32ref(0x0cf0) = SWAPu32(0x3c020000);
-	psxMu32ref(0x0cf4) = SWAPu32(0x2442641c);
-	psxMu32ref(0x09e0) = SWAPu32(0x43d0);
-	psxMu32ref(0x4d98) = SWAPu32(0x946f000a);
-*/
-	// opcode HLE
-	(u32&)PSX_ROM_START[0x0000] = SWAPu32((0x3b << 26) | 4);
-	psxMu32ref(0x0000) = SWAPu32((0x3b << 26) | 0);
-	psxMu32ref(0x00a0) = SWAPu32((0x3b << 26) | 1);
-	psxMu32ref(0x00b0) = SWAPu32((0x3b << 26) | 2);
-	psxMu32ref(0x00c0) = SWAPu32((0x3b << 26) | 3);
-	psxMu32ref(0x4c54) = SWAPu32((0x3b << 26) | 0);
-	psxMu32ref(0x8000) = SWAPu32((0x3b << 26) | 5);
-	psxMu32ref(0x07a0) = SWAPu32((0x3b << 26) | 0);
-	psxMu32ref(0x0884) = SWAPu32((0x3b << 26) | 0);
-	psxMu32ref(0x0894) = SWAPu32((0x3b << 26) | 0);
+#if HLE_ENABLE_EMPTY_ROM
+    if (hle_config_env_norom()) {
+        // not sure about these, the HLE seems to skip them which, I expect, is only wise
+        // if we're bypassing BIOS entirely. --jstine
 
-	// initial stack pointer for BIOS interrupt
-	psxMu32ref(0x6c80) = SWAPu32(0x000085c8);
+	    biosA0[0x71] = psxBios__96_init;
+	    biosA0[0x72] = psxBios__96_remove;
 
-	// initial RNG seed
-	psxMu32ref(0x9010) = SWAPu32(0xac20cc00);
+        // I'm not quite sure what this is about ... it's setting up some values into B0/C0 table, so I assume
+        // it should only be performed when bypassing BIOS entirely --jstine
 
-	// fonts
-    uLongf len;
-	len = 0x80000 - 0x66000;
-	uncompress((Bytef *)(PSX_ROM_START + 0x66000), &len, font_8140, sizeof(font_8140));
-	len = 0x80000 - 0x69d68;
-	uncompress((Bytef *)(PSX_ROM_START + 0x69d68), &len, font_889f, sizeof(font_889f));
+	    auto* ptr = (u32 *)PSXM(0x0874); // b0 table
+	    ptr[0] = SWAPu32(0x4c54 - 0x884);
 
-	// memory size 2 MB
-	// (mednafen doesn't seem to bother to set this...)
-	//psxHu32ref(0x1060) = SWAPu32(0x00000b88);
+	    ptr = (u32 *)PSXM(0x0674); // c0 table
+	    ptr[6] = SWAPu32(0xc80);
 
-	hleSoftCall = FALSE;
+	    psxMu32ref(0x0150) = SWAPu32(0x160);
+	    psxMu32ref(0x0154) = SWAPu32(0x320);
+	    psxMu32ref(0x0160) = SWAPu32(0x248);
+	    strcpy((char *)PSXM(0x248), "bu");
+    /*	psxMu32ref(0x0ca8) = SWAPu32(0x1f410004);
+	    psxMu32ref(0x0cf0) = SWAPu32(0x3c020000);
+	    psxMu32ref(0x0cf4) = SWAPu32(0x2442641c);
+	    psxMu32ref(0x09e0) = SWAPu32(0x43d0);
+	    psxMu32ref(0x4d98) = SWAPu32(0x946f000a);
+    */
+	    // opcode HLE
+	    (u32&)PSX_ROM_START[0x0000] = SWAPu32((0x3b << 26) | 4);
+	    psxMu32ref(0x0000) = SWAPu32((0x3b << 26) | 0);
+	    psxMu32ref(0x00a0) = SWAPu32((0x3b << 26) | 1);
+	    psxMu32ref(0x00b0) = SWAPu32((0x3b << 26) | 2);
+	    psxMu32ref(0x00c0) = SWAPu32((0x3b << 26) | 3);
+	    psxMu32ref(0x4c54) = SWAPu32((0x3b << 26) | 0);
+	    psxMu32ref(0x8000) = SWAPu32((0x3b << 26) | 5);
+	    psxMu32ref(0x07a0) = SWAPu32((0x3b << 26) | 0);
+	    psxMu32ref(0x0884) = SWAPu32((0x3b << 26) | 0);
+	    psxMu32ref(0x0894) = SWAPu32((0x3b << 26) | 0);
+
+	    // initial stack pointer for BIOS interrupt
+	    psxMu32ref(0x6c80) = SWAPu32(0x000085c8);
+
+	    // initial RNG seed
+	    psxMu32ref(0x9010) = SWAPu32(0xac20cc00);
+
+	    // fonts
+        uLongf len;
+	    len = 0x80000 - 0x66000;
+	    uncompress((Bytef *)(PSX_ROM_START + 0x66000), &len, font_8140, sizeof(font_8140));
+	    len = 0x80000 - 0x69d68;
+	    uncompress((Bytef *)(PSX_ROM_START + 0x69d68), &len, font_889f, sizeof(font_889f));
+
+	    // memory size 2 MB
+	    // (mednafen doesn't seem to bother to set this...)
+	    //psxHu32ref(0x1060) = SWAPu32(0x00000b88);
+    }
+#endif
+
+	hleSoftCall = 0;
 }
 
 void psxBiosShutdown() {
