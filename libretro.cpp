@@ -4142,19 +4142,20 @@ static bool isDebugAttached = false;
 
 void retro_run(void)
 {
-    if (const char* env = getenv("LUDO_ATTACH")) {
-        if (env[0] && env[0] == '1') {
-            if(!::IsDebuggerPresent()) {
-                if (isDebugAttached) {
-                    exit(0);
-                }
-                else {
-                    ::Sleep( 100 ); // to avoid 100% CPU load
-                    return;
-                }
-            }
+    isDebugAttached = isDebugAttached || IsDebuggerPresent();        // track it, because if debugger detaches, the process may close itself...
 
-            isDebugAttached = 1;        // if debugger detaches, the process will close itself...
+    if (const char* env = getenv("LUDO_DETACH_KILL"); env[0] && env[0] == '1') {
+        if(!::IsDebuggerPresent()) {
+            if (isDebugAttached) {
+                exit(0);
+            }
+        }
+    }
+
+    if (const char* env = getenv("LUDO_ATTACH_WAIT"); env[0] && env[0] == '1') {
+        if(!::IsDebuggerPresent()) {
+            ::Sleep(100);
+            return;
         }
     }
 
