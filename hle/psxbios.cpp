@@ -36,17 +36,26 @@
 //#   define PSXBIOS_LOG(...) (void(0))
 #endif
 
-#define HLE_ENABLE_RCNT			0
-#define HLE_ENABLE_PAD			0
-#define HLE_ENABLE_FILEIO		0
-#define HLE_ENABLE_MCD			0
-#define HLE_ENABLE_LOADEXEC		0
-#define HLE_ENABLE_GPU			0
-#define HLE_ENABLE_THREAD       1
-#define HLE_ENABLE_ENTRYINT     0
-#define HLE_ENABLE_HEAP         1
-#define HLE_ENABLE_EVENT        0
-#define HLE_ENABLE_EMPTY_ROM    0
+#define HLE_FULL                0       // enables full ROM-less HLE support
+
+// HLE exception handler depends on full HLE (everything in the list has to be 1)
+#define HLE_ENABLE_EXCEPTION    (HLE_FULL && 0)
+
+#define HLE_ENABLE_RCNT			(HLE_FULL || 0)
+#define HLE_ENABLE_PAD			(HLE_FULL || 0)
+#define HLE_ENABLE_FILEIO		(HLE_FULL || 0)
+#define HLE_ENABLE_MCD			(HLE_FULL || 0)
+#define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
+#define HLE_ENABLE_GPU			(HLE_FULL || 0)
+#define HLE_ENABLE_THREAD       (HLE_FULL || 0)
+#define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
+#define HLE_ENABLE_HEAP         (HLE_FULL || 1)
+#define HLE_ENABLE_EVENT        (HLE_FULL || 0)
+
+// qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
+// the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
+
+#define HLE_ENABLE_QSORT        0
 
 #include <cstdio>
 
@@ -437,38 +446,52 @@ static u32 *heap_end = NULL;
 
 static FileDesc FDesc[32];
 
-int hleSoftCall = FALSE;
+// oh silly PCSX. they did the classic VM nono and just recursively called the interpreter
+// in order to emulate softCalls. A miracle this ever worked.
+// For our purposes in Mednafen, we need to do things properly, which means setting up the
+// VM state and then exiting the current C code, and resuming C code (via special hook)
+// after the interpreter has done its part.
 
-static inline void softCall(u32 pc) {
-#if 0
+//int hleSoftCall = FALSE;      // commented out because nesting interpreter is very uncool. --jstine
+
+// Pick an unmapped area of PSX memory to treat as soft call return address.
+static const u32 kSoftCallBaseRetAddr = 0x8100'0000;
+
+enum SoftCallReturnId {
+};
+
+static inline void softCall(SoftCallReturnId id, u32 pc) {
+    // Proper SoftCall:
+    //  * save the current value of $ra onto the stack.
+    //  * set a special return address that identifies our HLE function and it's current yield state
+    //  * when the return address is detected from CPU, it bounces through HLE and resumes state
+    //    machine execution -- pops old $ra off the stack.
+    //
+    // Using the VM's stack machine is of critical importance to ensure proper handling of thread
+    // context switching which may occur during open-ended execution of interpreter.
+
+    // Pedantic: the PSX expects 16 bytes of shadow space below the current callstack.
+    //   Mostly things work without this, because it was only meant for use by debug builds to shadow values
+    //   passd by register ($a0 -> $a4).  --jstine
+
+    sp -= 0x10;
 	pc0 = pc;
-	ra = 0x80001000;
-
-	hleSoftCall = TRUE;
-
-	while (pc0 != 0x80001000) PSX_CPU->Run();
-
-	hleSoftCall = FALSE;
-#endif
+    ra = kSoftCallBaseRetAddr + (id*16);
+    sp += 0x10;
 }
 
-static inline void softCall2(u32 pc) {
-#if 0
-	u32 sra = ra;
-	pc0 = pc;
-	ra = 0x80001000;
+static void StackPush(u32 val) {
+    psxMu32ref(sp) = val;
+    sp -= 4;
+}
 
-	hleSoftCall = TRUE;
-
-	while (pc0 != 0x80001000) psxCpu->ExecuteBlock();
-	ra = sra;
-
-	hleSoftCall = FALSE;
-#endif
+static void StackPop(u32 val) {
+    sp += 4;
+    val = psxMu32ref(sp);
 }
 
 #if HLE_ENABLE_EVENT
-static inline void DeliverEvent(u32 ev, u32 spec) {
+static inline void DeliverEvent(SoftCallReturnId id, u32 ev, u32 spec) {
 	if (Event[ev][spec].status != EvStACTIVE) return;
 
 //	Event[ev][spec].status = EvStALREADY;
@@ -856,17 +879,26 @@ void psxBios_srand() { // 0x30
 	pc0 = ra;
 }
 
+#if HLE_ENABLE_QSORT
+
+// qsort implementation requires implementing a yieldable/iterable algorthm with all qsort state 
+// information allocated via the PSX Stackframe. --jstine
+
 static u32 qscmpfunc, qswidth;
 
-static inline int qscmp(char *a, char *b) {
-	u32 sa0 = a0;
+template<int call_base>
+static inline int qscmp(int call_id, char *a, char *b) {
 
+	auto sa0 = a0;
 	a0 = sa0 + (a - (char *)PSXM(sa0));
 	a1 = sa0 + (b - (char *)PSXM(sa0));
 
-	softCall2(qscmpfunc);
+    StackPush(ra);
+    StackPush(a0);      // PCSX impl of HLE preserves a0, though this seems weird to me --jstine
+    softCall(qscmpfunc);
+    StackPop(a0);
+    StackPop(ra);
 
-	a0 = sa0;
 	return (s32)v0;
 }
 
@@ -955,12 +987,16 @@ loop:
 }
 
 void psxBios_qsort() { // 0x31
+    StackReserve();
+
 	qswidth = a2;
 	qscmpfunc = a3;
-	qsort_main((char *)Ra0, (char *)Ra0 + a1 * a2);
+	qsort_main((char *)Ra0, (char *)Ra0 + (a1 * a2));
 
+    StackRelease();
 	pc0 = ra;
 }
+#endif
 
 #if HLE_ENABLE_HEAP
 void psxBios_malloc() { // 0x33
@@ -1160,7 +1196,7 @@ void psxBios_puts() { // 3e/3f
 void psxBios_printf() { // 0x3f
     const int t2len = 64;
 	char tmp2[t2len];
-    char ptmp[64];
+    char ptmp[512];      // FIXME: remove this and replace with StringUtila nd format directly into std string.
 	u32 save[4];
 	int n=1, i=0, j;
 	void *psp;
@@ -1286,11 +1322,10 @@ void psxBios_format() { // 0x41
 #if HLE_ENABLE_LOADEXEC
 void psxBios_Load() { // 0x42
 	EXE_HEADER eheader;
-	void *pa1;
 
 	PSXBIOS_LOG("psxBios_%s: %s, %x\n", biosA0n[0x42], Ra0, a1);
 
-	pa1 = Ra1;
+	void* pa1 = Ra1;
 	if (pa1 && LoadCdromFile(Ra0, &eheader) == 0) {
 		memcpy(pa1, ((char*)&eheader)+16, sizeof(EXEC));
 		v0 = 1;
@@ -1493,7 +1528,7 @@ void psxBios_SetMem() { // 9f
 }
 #endif
 
-#if HLE_ENABLE_EVENT
+#if HLE_ENABLE_EVENT && HLE_ENABLE_MCD
 void psxBios__card_info() { // ab
 	PSXBIOS_LOG("psxBios_%s: %x\n", biosA0n[0xab], a0);
 
@@ -2505,7 +2540,11 @@ void psxBiosInit_StdLib() {
 	biosA0[0x2e] = psxBios_memchr;
 	biosA0[0x2f] = psxBios_rand;
 	biosA0[0x30] = psxBios_srand;
+
+#if HLE_ENABLE_QSORT
 	biosA0[0x31] = psxBios_qsort;
+#endif
+
 	//biosA0[0x32] = psxBios_strtod;
 
 #if HLE_ENABLE_HEAP
@@ -2650,11 +2689,10 @@ void psxBiosInitFull() {
 	//biosA0[0xa8] = psxBios_bufs_cb_1;
 	//biosA0[0xa9] = psxBios_bufs_cb_2;
 	//biosA0[0xaa] = psxBios_bufs_cb_3;
+
 #if HLE_ENABLE_EVENT
     if (hle_config_env_event()) {
 	    biosA0[0x70] = psxBios__bu_init;
-	    biosA0[0xab] = psxBios__card_info;
-	    biosA0[0xac] = psxBios__card_load;
 	    biosB0[0x07] = psxBios_DeliverEvent;
 	    biosB0[0x08] = psxBios_OpenEvent;
 	    biosB0[0x09] = psxBios_CloseEvent;
@@ -2664,6 +2702,13 @@ void psxBiosInitFull() {
 	    biosB0[0x0d] = psxBios_DisableEvent;
 	    biosB0[0x20] = psxBios_UnDeliverEvent;
     }
+
+#if HLE_ENABLE_MCD
+    if (hle_config_env_mcd()) {
+        biosA0[0xab] = psxBios__card_info;
+	    biosA0[0xac] = psxBios__card_load;
+    }
+#endif
 #endif
 
     //biosA0[0axd] = psxBios__card_auto;
@@ -2926,8 +2971,6 @@ void psxBiosInitFull() {
 	    //psxHu32ref(0x1060) = SWAPu32(0x00000b88);
     }
 #endif
-
-	hleSoftCall = 0;
 }
 
 void psxBiosShutdown() {
@@ -2949,7 +2992,7 @@ void psxBiosShutdown() {
 	} \
 }
 
-#if 0
+#if HLE_ENABLE_EXCEPTION
 void biosInterrupt() {
 	int i, bufcount;
 
@@ -3045,15 +3088,32 @@ void biosInterrupt() {
 }
 #endif 
 
-#if HLE_ENABLE_ENTRYINT
+// IRQ_Write /IRQ_Read
+//  Weird APIs. They take an address input, but only care about the 4 LSBs.
+//  They are meant for accessing 0x1070 (ISTAT) and 0x1074 (IMASK) in the hardware register map.
+//  I like to search on 1070 and 1074 in PSX emulators since it's a common pattern when
+//  looking for ISTAT and IMASK, so I used those addresses in the function call helpers.. --jstine
+
+// BUGGED? note that IRQ_Write and IRQ_Read as implemented by Mednafen are dodgy.
+//   IRQ_Write is missing masking operations on MASK.
+//   IRQ_Read is injecting random garbage on writes to unaligned addresses (1071, 1072, etc).
+//     (fortunately writes to those addresses are rare or impossible, real HW ignored them --jstine).
+
+static void Write_ISTAT(u32 val) {
+    ::IRQ_Write(0x1070, val);
+}
+
+static u32 Read_ISTAT(u32 val) {
+    return ::IRQ_Read(0x1070);
+}
+
+
+#if HLE_ENABLE_EXCEPTION
 void psxBiosException() {
 	int i;
 
-	switch (psxRegs.CP0.n.Cause & 0x3c) {
+	switch (CP0_CAUSE & 0x3c) {
 		case 0x00: // Interrupt
-#ifdef PSXCPU_LOG
-//			PSXCPU_LOG("interrupt\n");
-#endif
 			SaveRegs();
 
 			sp = psxMu32(0x6c80); // create new stack for interrupt handlers
@@ -3072,7 +3132,7 @@ void psxBiosException() {
 			if (jmp_int != NULL) {
 				int i;
 
-				psxHwWrite32(0x1f801070, 0xffffffff);
+				Write_ISTAT(0xffffffff);
 
 				ra = jmp_int[0];
 				sp = jmp_int[1];
@@ -3085,7 +3145,7 @@ void psxBiosException() {
 				pc0 = ra;
 				return;
 			}
-			psxHwWrite16(0x1f801070, 0);
+			Write_ISTAT(0);
 			break;
 
 		case 0x20: // Syscall
@@ -3094,32 +3154,30 @@ void psxBiosException() {
 #endif
 			switch (a0) {
 				case 1: // EnterCritical - disable irq's
-					psxRegs.CP0.n.Status &= ~0x404; 
+					CP0_STATUS &= ~0x404; 
 					v0=1;	// HDHOSHY experimental patch: Spongebob, Coldblood, fearEffect, Medievil2, Martian Gothic
 					break;
 
 				case 2: // ExitCritical - enable irq's
-					psxRegs.CP0.n.Status |= 0x404; 
+					CP0_STATUS |= 0x404; 
 					break;
 			}
-			pc0 = psxRegs.CP0.n.EPC + 4;
+			pc0 = CP0_EPC + 4;
 
-			psxRegs.CP0.n.Status = (psxRegs.CP0.n.Status & 0xfffffff0) |
-								  ((psxRegs.CP0.n.Status & 0x3c) >> 2);
+	        CP0_STATUS = (CP0_STATUS & 0xfffffff0) |
+			            ((CP0_STATUS & 0x3c) >> 2);
 			return;
 
 		default:
-#ifdef PSXCPU_LOG
-			PSXCPU_LOG("unknown bios exception!\n");
-#endif
+			PSXBIOS_LOG("unknown bios exception!\n");
 			break;
 	}
 
-	pc0 = psxRegs.CP0.n.EPC;
-	if (psxRegs.CP0.n.Cause & 0x80000000) pc0+=4;
+	pc0 = CP0_EPC;
+	if (CP0_CAUSE & 0x80000000) pc0+=4;
 
-	psxRegs.CP0.n.Status = (psxRegs.CP0.n.Status & 0xfffffff0) |
-						  ((psxRegs.CP0.n.Status & 0x3c) >> 2);
+	CP0_STATUS = (CP0_STATUS & 0xfffffff0) |
+			    ((CP0_STATUS & 0x3c) >> 2);
 }
 #endif
 
