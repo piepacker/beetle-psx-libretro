@@ -27,9 +27,8 @@
 #include <zlib.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
-
-
 
 #if !defined(PSXBIOS_LOG)
 #   define PSXBIOS_LOG(...) (printf(__VA_ARGS__), fflush(nullptr))
@@ -41,13 +40,17 @@
 // HLE exception handler depends on full HLE (everything in the list has to be 1)
 #define HLE_ENABLE_EXCEPTION    (HLE_FULL && 0)
 
-#define HLE_ENABLE_RCNT			(HLE_FULL || 0)
+// Dev notes:
+//  * Tekken 2/3 do not use threads
+//  * Tekken 2/3 do not use root counters (rcnt)
+
+#define HLE_ENABLE_RCNT			(HLE_FULL || 1)
 #define HLE_ENABLE_PAD			(HLE_FULL || 0)
 #define HLE_ENABLE_FILEIO		(HLE_FULL || 0)
 #define HLE_ENABLE_MCD			(HLE_FULL || 0)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
 #define HLE_ENABLE_GPU			(HLE_FULL || 0)
-#define HLE_ENABLE_THREAD       (HLE_FULL || 0)
+#define HLE_ENABLE_THREAD       (HLE_FULL || 1)
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
 #define HLE_ENABLE_HEAP         (HLE_FULL || 1)
 #define HLE_ENABLE_EVENT        (HLE_FULL || 0)
@@ -56,8 +59,6 @@
 // the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
 
 #define HLE_ENABLE_QSORT        0
-
-#include <cstdio>
 
 static bool hle_config_get_bool(std::string opt) {
     auto woo = "PSX_HLE_CONFIG_" + opt;
@@ -258,6 +259,75 @@ const char *biosC0n[256] = {
 #define CP0_STATUS   (PSX_CPU->CP0.SR     )
 #endif
 
+
+#if HLE_PCSX_IFC
+#define RCNT_SetCount(rid, val)     psxRcntWcount (rid, val)
+#define RCNT_SetMode(rid, val)      psxRcntWtarget(rid, val)
+#define RCNT_SetTarget(rid, val)    psxRcntWtarget(rid, val)
+#define RCNT_GetCount(rid)          psxRcntRcount (rid)
+#define RCNT_GetMode(rid)           psxRcntRtarget(rid)
+#define RCNT_GetTarget(rid)         psxRcntRtarget(rid)
+#endif
+
+
+#if HLE_MEDNEFEN_IFC
+#include "mednafen/psx/timer.h"
+
+#define RCNT_SetCount(rid, val)    TIMER_Write(0, ((rid) << 4) | 0x00, val)
+#define RCNT_SetMode(rid, val)     TIMER_Write(0, ((rid) << 4) | 0x04, val)
+#define RCNT_SetTarget(rid, val)   TIMER_Write(0, ((rid) << 4) | 0x08, val)
+#define RCNT_GetCount(rid)         TIMER_Read (0, ((rid) << 4) | 0x00)
+#define RCNT_GetMode(rid)          TIMER_Read (0, ((rid) << 4) | 0x04)
+#define RCNT_GetTarget(rid)        TIMER_Read (0, ((rid) << 4) | 0x08)
+#endif
+
+
+// IRQ_Write / IRQ_Read
+#if HLE_PCSX_IFC
+static void Write_ISTAT(u32 val) {
+    psxHwWrite32(0x1070, val);
+}
+
+static u32 Read_ISTAT() {
+    return psxHu32(0x1070);
+}
+
+static void Write_IMASK(u32 val) {
+    psxHwWrite32(0x1074, val);
+}
+
+static u32 Read_IMASK() {
+    return psxHu32(0x1074);
+}
+#endif
+
+#if HLE_MEDNEFEN_IFC
+//  Weird APIs by Mednafen here... They take an address input, but only care about the 4 LSBs.
+//  They are meant for accessing 0x1070 (ISTAT) and 0x1074 (IMASK) in the hardware register map.
+//  I like to search on 1070 and 1074 in PSX emulators since it's a common pattern when
+//  looking for ISTAT and IMASK, so I used those addresses in the function call helpers.. --jstine
+
+// BUGGED? note that IRQ_Write and IRQ_Read as implemented by Mednafen are dodgy.
+//   IRQ_Write is missing masking operations on MASK.
+//   IRQ_Read is injecting random garbage on writes to unaligned addresses (1071, 1072, etc).
+//     (fortunately writes to those addresses are rare or impossible, real HW ignored them --jstine).
+
+static void Write_ISTAT(u32 val) {
+    ::IRQ_Write(0x1070, val);
+}
+
+static u32 Read_ISTAT() {
+    return ::IRQ_Read(0x1070);
+}
+
+static void Write_IMASK(u32 val) {
+    ::IRQ_Write(0x1074, val);
+}
+
+static u32 Read_IMASK() {
+    return ::IRQ_Read(0x1074);
+}
+#endif
 
 //#define zr (GPR_ARRAY[0])
 #define at (GPR_ARRAY[1])
@@ -1562,14 +1632,14 @@ void psxBios_SetRCnt() { // 02
     if (a0 != 3) {
         u32 mode=0;
 
-        psxRcntWtarget(a0, a1);
         if (a2&0x1000) mode|= 0x050; // Interrupt Mode
         if (a2&0x0100) mode|= 0x008; // Count to 0xffff
         if (a2&0x0010) mode|= 0x001; // Timer stop mode
         if (a0 == 2) { if (a2&0x0001) mode|= 0x200; } // System Clock mode
         else         { if (a2&0x0001) mode|= 0x100; } // System Clock mode
 
-        psxRcntWmode(a0, mode);
+        RCNT_SetMode (a0, mode);
+        RCNT_SetCount(a0, a1);
     }
     pc0 = ra;
 }
@@ -1578,8 +1648,8 @@ void psxBios_GetRCnt() { // 03
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x03]);
 
     a0&= 0x3;
-    if (a0 != 3) v0 = psxRcntRcount(a0);
-    else v0 = 0;
+    v0 = 0;
+    if (a0 < 3) v0 = RCNT_GetCount(a0);
     pc0 = ra;
 }
 
@@ -1587,17 +1657,26 @@ void psxBios_StartRCnt() { // 04
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x04]);
 
     a0&= 0x3;
-    if (a0 != 3) psxHu32ref(0x1074)|= SWAP32((u32)((1<<(a0+4))));
-    else psxHu32ref(0x1074)|= SWAPu32(0x1);
-    v0 = 1; pc0 = ra;
+
+    auto imask = Read_IMASK();
+    if (a0 != 3) { imask |= SWAP32((u32)((1<<(a0+4)))); }
+    else         { imask |= SWAPu32(0x1); }
+    Write_IMASK(imask);
+
+    v0 = 1;
+    pc0 = ra;
 }
 
 void psxBios_StopRCnt() { // 05
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x05]);
 
     a0&= 0x3;
-    if (a0 != 3) psxHu32ref(0x1074)&= SWAP32((u32)(~(1<<(a0+4))));
-    else psxHu32ref(0x1074)&= SWAPu32(~0x1);
+
+    auto imask = Read_IMASK();
+    if (a0 != 3) { imask &= ~SWAP32((u32)((1<<(a0+4)))); }
+    else         { imask &= ~SWAPu32(0x1); }
+    Write_IMASK(imask);
+
     pc0 = ra;
 }
 
@@ -1606,9 +1685,9 @@ void psxBios_ResetRCnt() { // 06
 
     a0&= 0x3;
     if (a0 != 3) {
-        psxRcntWmode(a0, 0);
-        psxRcntWtarget(a0, 0);
-        psxRcntWcount(a0, 0);
+        RCNT_SetCount (a0, 0);
+        RCNT_SetMode  (a0, 0);
+        RCNT_SetTarget(a0, 0);
     }
     pc0 = ra;
 }
@@ -3087,26 +3166,6 @@ void biosInterrupt() {
     }
 }
 #endif 
-
-// IRQ_Write /IRQ_Read
-//  Weird APIs. They take an address input, but only care about the 4 LSBs.
-//  They are meant for accessing 0x1070 (ISTAT) and 0x1074 (IMASK) in the hardware register map.
-//  I like to search on 1070 and 1074 in PSX emulators since it's a common pattern when
-//  looking for ISTAT and IMASK, so I used those addresses in the function call helpers.. --jstine
-
-// BUGGED? note that IRQ_Write and IRQ_Read as implemented by Mednafen are dodgy.
-//   IRQ_Write is missing masking operations on MASK.
-//   IRQ_Read is injecting random garbage on writes to unaligned addresses (1071, 1072, etc).
-//     (fortunately writes to those addresses are rare or impossible, real HW ignored them --jstine).
-
-static void Write_ISTAT(u32 val) {
-    ::IRQ_Write(0x1070, val);
-}
-
-static u32 Read_ISTAT(u32 val) {
-    return ::IRQ_Read(0x1070);
-}
-
 
 #if HLE_ENABLE_EXCEPTION
 void psxBiosException() {
