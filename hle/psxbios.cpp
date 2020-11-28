@@ -44,15 +44,15 @@
 //  * Tekken 2/3 do not use threads
 //  * Tekken 2/3 do not use root counters (rcnt)
 
+#define HLE_ENABLE_HEAP         (HLE_FULL || 1)
+#define HLE_ENABLE_FILEIO		(HLE_FULL || 0)        // fileio depends on HLE memcard ?
 #define HLE_ENABLE_RCNT			(HLE_FULL || 1)
 #define HLE_ENABLE_PAD			(HLE_FULL || 0)
-#define HLE_ENABLE_FILEIO		(HLE_FULL || 0)
+#define HLE_ENABLE_GPU			(HLE_FULL || 0)
 #define HLE_ENABLE_MCD			(HLE_FULL || 0)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
-#define HLE_ENABLE_GPU			(HLE_FULL || 0)
 #define HLE_ENABLE_THREAD       (HLE_FULL || 1)
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
-#define HLE_ENABLE_HEAP         (HLE_FULL || 1)
 #define HLE_ENABLE_EVENT        (HLE_FULL || 0)
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
@@ -329,6 +329,25 @@ static u32 Read_IMASK() {
 }
 #endif
 
+#if HLE_PCSX_IFC
+void VmcWriteNV(int port, int slot, const void* src, int size) {
+    auto* dest = port ? Mcd2Data : Mcd1Data;
+    memcpy(dest + a1 * 128, (uint8_t*)src, 128);
+    SaveMcd(port ? Config.Mcd2 : Config.Mcd1, mcd_raw, a1 * 128, 128);
+}
+
+#endif
+
+#if HLE_MEDNEFEN_IFC && HLE_ENABLE_MCD
+#include "mednafen/psx/frontio.h"
+extern FrontIO *PSX_FIO;        // defined by libretro. dunno why this isn't baked into the PSX core for mednafen. --jstine
+void VmcWriteNV(int port, int slot, const void* src, int size) {
+    auto mcd = PSX_FIO->GetMemcardDevice(port);
+    mcd->WriteNV((uint8_t*)src, a1 * 128, 128);
+}
+#endif
+
+
 //#define zr (GPR_ARRAY[0])
 #define at (GPR_ARRAY[1])
 #define v0 (GPR_ARRAY[2])
@@ -488,6 +507,9 @@ static u32 SysIntRP[8];
 static int *pad_buf = NULL;
 static char *pad_buf1 = NULL, *pad_buf2 = NULL;
 static int pad_buf1len, pad_buf2len;
+#endif
+
+#if HLE_ENABLE_MCD
 static int CardState = -1;
 static u32 card_active_chan;
 #endif
@@ -2386,22 +2408,19 @@ void psxBios_StopCARD() { // 4c
 }
 
 void psxBios__card_write() { // 0x4e
-    void *pa2 = Ra2;
-    int port;
+
+    assert(PSX_FIO);
 
     PSXBIOS_LOG("psxBios_%s: %x,%x,%x\n", biosB0n[0x4e], a0, a1, a2);
 
+    // is card_active_chan supposed to be slot? --jstine
     card_active_chan = a0;
-    port = a0 >> 4;
+    int port = a0 >> 4;
+    int slot = 0;
 
-    if (pa2) {
-        if (port == 0) {
-            memcpy(Mcd1Data + a1 * 128, pa2, 128);
-            SaveMcd(Config.Mcd1, Mcd1Data, a1 * 128, 128);
-        } else {
-            memcpy(Mcd2Data + a1 * 128, pa2, 128);
-            SaveMcd(Config.Mcd2, Mcd2Data, a1 * 128, 128);
-        }
+    if (auto *pa2 = Ra2) {
+        auto mcd = PSX_FIO->GetMemcardDevice(port);
+        VmcWriteNV(port, slot, pa2, a1 * 128, 128);
     }
 
     DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
