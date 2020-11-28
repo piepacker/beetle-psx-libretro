@@ -4142,9 +4142,9 @@ static bool isDebugAttached = false;
 
 void retro_run(void)
 {
-    isDebugAttached = isDebugAttached || IsDebuggerPresent();        // track it, because if debugger detaches, the process may close itself...
+    isDebugAttached = isDebugAttached || ::IsDebuggerPresent();        // track it, because if debugger detaches, the process may close itself...
 
-    if (const char* env = getenv("LUDO_DETACH_KILL"); env[0] && env[0] == '1') {
+    if (const char* env = getenv("LUDO_DETACH_KILL"); env && env[0] == '1') {
         if(!::IsDebuggerPresent()) {
             if (isDebugAttached) {
                 exit(0);
@@ -4152,13 +4152,12 @@ void retro_run(void)
         }
     }
 
-    if (const char* env = getenv("LUDO_ATTACH_WAIT"); env[0] && env[0] == '1') {
+    if (const char* env = getenv("LUDO_ATTACH_WAIT"); env && env[0] == '1') {
         if(!::IsDebuggerPresent()) {
             ::Sleep(100);
             return;
         }
     }
-
 
    bool updated = false;
    //code to implement audio and video disable is not yet implemented
