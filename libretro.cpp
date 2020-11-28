@@ -4138,26 +4138,26 @@ void retro_unload_game(void)
 static uint64_t video_frames, audio_frames;
 #define SOUND_CHANNELS 2
 
-static bool isDebugAttached = false;
+static bool g_dbg_WasAttached = false;
 
 void retro_run(void)
 {
-    isDebugAttached = isDebugAttached || ::IsDebuggerPresent();        // track it, because if debugger detaches, the process may close itself...
+    bool hasMswDebugger = ::IsDebuggerPresent();
+    g_dbg_WasAttached = g_dbg_WasAttached || hasMswDebugger;        // track it, because if debugger detaches, the process may close itself...
 
-    if (const char* env = getenv("LUDO_DETACH_KILL"); env && env[0] == '1') {
-        if(!::IsDebuggerPresent()) {
-            if (isDebugAttached) {
+    if (!hasMswDebugger) {
+        if (g_dbg_WasAttached) {
+            if (const char* env = getenv("RETRO_DETACH_KILL"); env && env[0] == '1') {
                 exit(0);
             }
         }
-    }
 
-    if (const char* env = getenv("LUDO_ATTACH_WAIT"); env && env[0] == '1') {
-        if(!::IsDebuggerPresent()) {
+        if (const char* env = getenv("RETRO_ATTACH_WAIT"); env && env[0] == '1') {
             ::Sleep(100);
             return;
         }
     }
+
 
    bool updated = false;
    //code to implement audio and video disable is not yet implemented
