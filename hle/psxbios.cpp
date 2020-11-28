@@ -259,6 +259,56 @@ const char *biosC0n[256] = {
 #define CP0_STATUS   (PSX_CPU->CP0.SR     )
 #endif
 
+//#define zr (GPR_ARRAY[0])
+#define at (GPR_ARRAY[1])
+#define v0 (GPR_ARRAY[2])
+#define v1 (GPR_ARRAY[3])
+#define a0 (GPR_ARRAY[4])
+#define a1 (GPR_ARRAY[5])
+#define a2 (GPR_ARRAY[6])
+#define a3 (GPR_ARRAY[7])
+#define t0 (GPR_ARRAY[8])
+#define t1 (GPR_ARRAY[9])
+#define t2 (GPR_ARRAY[10])
+#define t3 (GPR_ARRAY[11])
+#define t4 (GPR_ARRAY[12])
+#define t5 (GPR_ARRAY[13])
+#define t6 (GPR_ARRAY[14])
+#define t7 (GPR_ARRAY[15])
+#define t8 (GPR_ARRAY[16])
+#define t9 (GPR_ARRAY[17])
+#define s0 (GPR_ARRAY[18])
+#define s1 (GPR_ARRAY[19])
+#define s2 (GPR_ARRAY[20])
+#define s3 (GPR_ARRAY[21])
+#define s4 (GPR_ARRAY[22])
+#define s5 (GPR_ARRAY[23])
+#define s6 (GPR_ARRAY[24])
+#define s7 (GPR_ARRAY[25])
+#define k0 (GPR_ARRAY[26])
+#define k1 (GPR_ARRAY[27])
+#define gp (GPR_ARRAY[28])
+#define sp (GPR_ARRAY[29])
+#define fp (GPR_ARRAY[30])
+#define ra (GPR_ARRAY[31])
+
+static const uint32_t PS1_ICacheSize		= 0x00001000; // 4KB	(instruction cache)
+static const uint32_t PS1_RamPhysicalSize	= 0x00200000; // 2MB	(physical)
+static const uint32_t PS1_RamMirrorSize		= 0x00800000; // 8MB	(addressable, mirrored)
+static const uint32_t PS1_FASTRAMSIZE		= 0x00000400; // 1KB
+static const uint32_t PS1_BIOSSIZE			= 0x00080000; // 512KB
+static const uint32_t PS1_BIOSRAMSIZE		= 0x00010000; // 512KB
+static const uint32_t PS1_SegmentAddrMask	= 0x1fffffff; // masks away all segment information, useful since most emu operations don't need to care
+
+static const uint32_t PS1_FastRamStart		= 0x1f800000;
+static const uint32_t PS1_FastRamEnd		= 0x1f800000 + PS1_FASTRAMSIZE;
+static const uint32_t PS1_BiosRomStart		= 0x1fc00000;
+static const uint32_t PS1_BiosRomEnd		= 0x1fc00000 + PS1_BIOSSIZE;
+
+#define PSX_RAM_START (MainRAM->data8)
+#define PSX_ROM_START (BIOSROM->data8)
+
+
 
 #if HLE_PCSX_IFC
 #define RCNT_SetCount(rid, val)     psxRcntWcount (rid, val)
@@ -347,55 +397,6 @@ void VmcWriteNV(int port, int slot, const void* src, int size) {
 }
 #endif
 
-
-//#define zr (GPR_ARRAY[0])
-#define at (GPR_ARRAY[1])
-#define v0 (GPR_ARRAY[2])
-#define v1 (GPR_ARRAY[3])
-#define a0 (GPR_ARRAY[4])
-#define a1 (GPR_ARRAY[5])
-#define a2 (GPR_ARRAY[6])
-#define a3 (GPR_ARRAY[7])
-#define t0 (GPR_ARRAY[8])
-#define t1 (GPR_ARRAY[9])
-#define t2 (GPR_ARRAY[10])
-#define t3 (GPR_ARRAY[11])
-#define t4 (GPR_ARRAY[12])
-#define t5 (GPR_ARRAY[13])
-#define t6 (GPR_ARRAY[14])
-#define t7 (GPR_ARRAY[15])
-#define t8 (GPR_ARRAY[16])
-#define t9 (GPR_ARRAY[17])
-#define s0 (GPR_ARRAY[18])
-#define s1 (GPR_ARRAY[19])
-#define s2 (GPR_ARRAY[20])
-#define s3 (GPR_ARRAY[21])
-#define s4 (GPR_ARRAY[22])
-#define s5 (GPR_ARRAY[23])
-#define s6 (GPR_ARRAY[24])
-#define s7 (GPR_ARRAY[25])
-#define k0 (GPR_ARRAY[26])
-#define k1 (GPR_ARRAY[27])
-#define gp (GPR_ARRAY[28])
-#define sp (GPR_ARRAY[29])
-#define fp (GPR_ARRAY[30])
-#define ra (GPR_ARRAY[31])
-
-static const uint32_t PS1_ICacheSize		= 0x00001000; // 4KB	(instruction cache)
-static const uint32_t PS1_RamPhysicalSize	= 0x00200000; // 2MB	(physical)
-static const uint32_t PS1_RamMirrorSize		= 0x00800000; // 8MB	(addressable, mirrored)
-static const uint32_t PS1_FASTRAMSIZE		= 0x00000400; // 1KB
-static const uint32_t PS1_BIOSSIZE			= 0x00080000; // 512KB
-static const uint32_t PS1_BIOSRAMSIZE		= 0x00010000; // 512KB
-static const uint32_t PS1_SegmentAddrMask	= 0x1fffffff; // masks away all segment information, useful since most emu operations don't need to care
-
-static const uint32_t PS1_FastRamStart		= 0x1f800000;
-static const uint32_t PS1_FastRamEnd		= 0x1f800000 + PS1_FASTRAMSIZE;
-static const uint32_t PS1_BiosRomStart		= 0x1fc00000;
-static const uint32_t PS1_BiosRomEnd		= 0x1fc00000 + PS1_BIOSSIZE;
-
-#define PSX_RAM_START (MainRAM->data8)
-#define PSX_ROM_START (BIOSROM->data8)
 
 static u8* PSXM(u32 unmasked) {
     auto masked = unmasked & 0x1fff'ffff;
