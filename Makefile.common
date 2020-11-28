@@ -291,8 +291,10 @@ ifneq ($(HAVE_GRIFFIN), 1)
                   $(CORE_DIR)/rsx/rsx_intf.cpp
 
    SOURCES_C +=   \
-						$(MEDNAFEN_DIR)/settings.c \
+                  $(MEDNAFEN_DIR)/settings.c \
                   $(MEDNAFEN_DIR)/state.c
+
+   SOURCES_CXX += hle/psxbios.cpp
 
    ifneq ($(RSX_DUMP),)
       SOURCES_CXX += $(CORE_DIR)/rsx/rsx_dump.cpp
