@@ -334,21 +334,10 @@ static const uint32_t PS1_BiosRomEnd		= 0x1fc00000 + PS1_BIOSSIZE;
 
 // IRQ_Write / IRQ_Read
 #if HLE_PCSX_IFC
-static void Write_ISTAT(u32 val) {
-    psxHwWrite32(0x1070, val);
-}
-
-static u32 Read_ISTAT() {
-    return psxHu32(0x1070);
-}
-
-static void Write_IMASK(u32 val) {
-    psxHwWrite32(0x1074, val);
-}
-
-static u32 Read_IMASK() {
-    return psxHu32(0x1074);
-}
+static void Write_ISTAT(u32 val) { psxHwWrite32(0x1070, val); }
+static void Write_IMASK(u32 val) { psxHwWrite32(0x1074, val); }
+static u32 Read_ISTAT() { return psxHu32(0x1070); }
+static u32 Read_IMASK() { return psxHu32(0x1074); }
 #endif
 
 #if HLE_MEDNAFEN_IFC
@@ -362,21 +351,10 @@ static u32 Read_IMASK() {
 //   IRQ_Read is injecting random garbage on writes to unaligned addresses (1071, 1072, etc).
 //     (fortunately writes to those addresses are rare or impossible, real HW ignored them --jstine).
 
-static void Write_ISTAT(u32 val) {
-    ::IRQ_Write(0x1070, val);
-}
-
-static u32 Read_ISTAT() {
-    return ::IRQ_Read(0x1070);
-}
-
-static void Write_IMASK(u32 val) {
-    ::IRQ_Write(0x1074, val);
-}
-
-static u32 Read_IMASK() {
-    return ::IRQ_Read(0x1074);
-}
+static void Write_ISTAT(u32 val) { IRQ_Write(0x1070, val); }
+static void Write_IMASK(u32 val) { IRQ_Write(0x1074, val); }
+static u32 Read_ISTAT() { return IRQ_Read(0x1070); }
+static u32 Read_IMASK() { return IRQ_Read(0x1074); }
 #endif
 
 #if HLE_PCSX_IFC
