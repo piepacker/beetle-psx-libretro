@@ -232,7 +232,7 @@ const char *biosC0n[256] = {
     "PatchAOTable",
 };
 
-#define HLE_MEDNEFEN_IFC 1
+#define HLE_MEDNAFEN_IFC 1
 #define HLE_PCSX_IFC     0
 
 #if HLE_PCSX_IFC
@@ -246,7 +246,7 @@ const char *biosC0n[256] = {
 //#define CP0_STATUS   (psxRegs.CP0.n.Status  )
 #endif
 
-#if HLE_MEDNEFEN_IFC
+#if HLE_MEDNAFEN_IFC
 #include "mednafen/psx/psx.h"
 
 #define GPR_ARRAY (PSX_CPU->GPR)
@@ -270,7 +270,7 @@ const char *biosC0n[256] = {
 #endif
 
 
-#if HLE_MEDNEFEN_IFC
+#if HLE_MEDNAFEN_IFC
 #include "mednafen/psx/timer.h"
 
 #define RCNT_SetCount(rid, val)    TIMER_Write(0, ((rid) << 4) | 0x00, val)
@@ -301,7 +301,7 @@ static u32 Read_IMASK() {
 }
 #endif
 
-#if HLE_MEDNEFEN_IFC
+#if HLE_MEDNAFEN_IFC
 //  Weird APIs by Mednafen here... They take an address input, but only care about the 4 LSBs.
 //  They are meant for accessing 0x1070 (ISTAT) and 0x1074 (IMASK) in the hardware register map.
 //  I like to search on 1070 and 1074 in PSX emulators since it's a common pattern when
@@ -338,7 +338,7 @@ void VmcWriteNV(int port, int slot, const void* src, int size) {
 
 #endif
 
-#if HLE_MEDNEFEN_IFC && HLE_ENABLE_MCD
+#if HLE_MEDNAFEN_IFC && HLE_ENABLE_MCD
 #include "mednafen/psx/frontio.h"
 extern FrontIO *PSX_FIO;        // defined by libretro. dunno why this isn't baked into the PSX core for mednafen. --jstine
 void VmcWriteNV(int port, int slot, const void* src, int size) {
