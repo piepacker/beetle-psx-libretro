@@ -44,12 +44,13 @@
 //  * Tekken 2/3 do not use threads
 //  * Tekken 2/3 do not use root counters (rcnt)
 //  * Tekken 2/3 do not use the Event system (DeliverEvent, etc)
+//  * Tekken 2/3 do not use GPU APIs
 
 #define HLE_ENABLE_HEAP         (HLE_FULL || 1)
 #define HLE_ENABLE_FILEIO		(HLE_FULL || 0)        // fileio depends on HLE memcard ?
 #define HLE_ENABLE_RCNT			(HLE_FULL || 1)
 #define HLE_ENABLE_PAD			(HLE_FULL || 0)
-#define HLE_ENABLE_GPU			(HLE_FULL || 0)
+#define HLE_ENABLE_GPU			(HLE_FULL || 1)
 #define HLE_ENABLE_MCD			(HLE_FULL || 0)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
 #define HLE_ENABLE_THREAD       (HLE_FULL || 1)
@@ -1493,6 +1494,23 @@ void psxBios_FlushCache() { // 44
     pc0 = ra;
 }
 
+
+#if HLE_PCSX_IFC
+#define GPU_W_DATA(dat)     GPU_writeData  (dat)
+#define GPU_W_STATUS(dat)   GPU_writeStatus(dat)
+#define GPU_R_STATUS(dat)   GPU_readStatus (dat)
+#define DMA_W(addr, val)    psxHwWrite32(addr, val)
+#define DMA_R(addr)         psxHwRead32 (addr)
+#endif
+
+#if HLE_MEDNAFEN_IFC
+#define GPU_W_DATA(dat)     GPU_Write(0, 0, dat)
+#define GPU_W_STATUS(dat)   GPU_Write(0, 4, dat)
+#define GPU_R_STATUS(dat)   GPU_Read(0, 4)
+#define DMA_W(addr, val)    DMA_Write(0, addr, val)
+#define DMA_R(addr)         DMA_Read (0, addr)
+#endif
+
 #if HLE_ENABLE_GPU
 void psxBios_GPU_dw() { // 0x46
     int size;
@@ -1500,13 +1518,13 @@ void psxBios_GPU_dw() { // 0x46
 
     PSXBIOS_LOG("psxBios_%s\n", biosA0n[0x46]);
 
-    GPU_writeData(0xa0000000);
-    GPU_writeData((a1<<16)|(a0&0xffff));
-    GPU_writeData((a3<<16)|(a2&0xffff));
+    GPU_W_DATA(0xa0000000);
+    GPU_W_DATA((a1<<16)|(a0&0xffff));
+    GPU_W_DATA((a3<<16)|(a2&0xffff));
     size = (a2*a3+1)/2;
     ptr = (s32*)PSXM(Rsp[4]);  //that is correct?
     do {
-        GPU_writeData(SWAP32(*ptr));
+        GPU_W_DATA(SWAP32(*ptr));
         ptr++;
     } while(--size);
 
@@ -1516,28 +1534,29 @@ void psxBios_GPU_dw() { // 0x46
 void psxBios_mem2vram() { // 0x47
     int size;
 
-    GPU_writeData(0xa0000000);
-    GPU_writeData((a1<<16)|(a0&0xffff));
-    GPU_writeData((a3<<16)|(a2&0xffff));
+    GPU_W_DATA(0xa0000000);
+    GPU_W_DATA((a1<<16)|(a0&0xffff));
+    GPU_W_DATA((a3<<16)|(a2&0xffff));
     size = (a2*a3+1)/2;
-    GPU_writeStatus(0x04000002);
-    psxHwWrite32(0x1f8010f4,0);
-    psxHwWrite32(0x1f8010f0,psxHwRead32(0x1f8010f0)|0x800);
-    psxHwWrite32(0x1f8010a0,Rsp[4]);//might have a buggy...
-    psxHwWrite32(0x1f8010a4,((size/16)<<16)|16);
-    psxHwWrite32(0x1f8010a8,0x01000201);
+    GPU_W_STATUS(0x04000002);
+
+    DMA_W(0x1f8010f4,0);
+    DMA_W(0x1f8010f0, DMA_R(0x1f8010f0)|0x800);
+    DMA_W(0x1f8010a0, Rsp[4]);//might have a buggy...
+    DMA_W(0x1f8010a4, ((size/16)<<16)|16);
+    DMA_W(0x1f8010a8, 0x01000201);
 
     pc0 = ra;
 }
 
 void psxBios_SendGPU() { // 0x48
-    GPU_writeStatus(a0);
-    gpuSyncPluginSR();
+    GPU_W_STATUS(a0);
+    //gpuSyncPluginSR();
     pc0 = ra;
 }
 
 void psxBios_GPU_cw() { // 0x49
-    GPU_writeData(a0);
+    GPU_W_DATA(a0);
     pc0 = ra;
 }
 
@@ -1545,7 +1564,7 @@ void psxBios_GPU_cwb() { // 0x4a
     s32 *ptr = (s32*)Ra0;
     int size = a1;
     while(size--) {
-        GPU_writeData(SWAP32(*ptr));
+        GPU_W_DATA(SWAP32(*ptr));
         ptr++;
     }
 
@@ -1553,26 +1572,26 @@ void psxBios_GPU_cwb() { // 0x4a
 }
    
 void psxBios_GPU_SendPackets() { //4b:	
-    GPU_writeStatus(0x04000002);
-    psxHwWrite32(0x1f8010f4,0);
-    psxHwWrite32(0x1f8010f0,psxHwRead32(0x1f8010f0)|0x800);
-    psxHwWrite32(0x1f8010a0,a0);
-    psxHwWrite32(0x1f8010a4,0);
-    psxHwWrite32(0x1f8010a8,0x010000401);
+    GPU_W_STATUS(0x04000002);
+    DMA_W(0x1f8010f4, 0);
+    DMA_W(0x1f8010f0, DMA_R(0x1f8010f0)|0x800);
+    DMA_W(0x1f8010a0, a0);
+    DMA_W(0x1f8010a4, 0);
+    DMA_W(0x1f8010a8, 0x010000401);
     pc0 = ra;
 }
 
 void psxBios_sys_a0_4c() { // 0x4c GPU relate
-    psxHwWrite32(0x1f8010a8,0x00000401);
-    GPU_writeData(0x0400000);
-    GPU_writeData(0x0200000);
-    GPU_writeData(0x0100000);
+    DMA_W(0x1f8010a8,0x00000401);
+    GPU_W_DATA(0x0400000);
+    GPU_W_DATA(0x0200000);
+    GPU_W_DATA(0x0100000);
 
     pc0 = ra;
 }
 
 void psxBios_GPU_GetGPUStatus() { // 0x4d
-    v0 = GPU_readStatus();
+    v0 = GPU_R_STATUS();
     pc0 = ra;
 }
 #endif
