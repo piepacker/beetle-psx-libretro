@@ -43,6 +43,7 @@
 // Dev notes:
 //  * Tekken 2/3 do not use threads
 //  * Tekken 2/3 do not use root counters (rcnt)
+//  * Tekken 2/3 do not use the Event system (DeliverEvent, etc)
 
 #define HLE_ENABLE_HEAP         (HLE_FULL || 1)
 #define HLE_ENABLE_FILEIO		(HLE_FULL || 0)        // fileio depends on HLE memcard ?
@@ -53,7 +54,7 @@
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
 #define HLE_ENABLE_THREAD       (HLE_FULL || 1)
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
-#define HLE_ENABLE_EVENT        (HLE_FULL || 0)
+#define HLE_ENABLE_EVENT        (HLE_FULL || 1)
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
 // the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
@@ -529,46 +530,92 @@ static FileDesc FDesc[32];
 static const u32 kSoftCallBaseRetAddr = 0x8100'0000;
 
 enum SoftCallReturnId {
+    SCRI_None = 0,
+
+    SCRI_DeliverEvent_FuncEntry,
+    SCRI_DeliverEvent_Resume,
+
+    SCRI_psxBios__bu_init_00,
+    SCRI_psxBios__bu_init_01,
+    SCRI_psxBios__bu_init_02,
+
+    SCRI_psxBios_DeliverEvent_00,
 };
 
-static inline void softCall(SoftCallReturnId id, u32 pc) {
-    // Proper SoftCall:
-    //  * save the current value of $ra onto the stack.
-    //  * set a special return address that identifies our HLE function and it's current yield state
-    //  * when the return address is detected from CPU, it bounces through HLE and resumes state
-    //    machine execution -- pops old $ra off the stack.
-    //
-    // Using the VM's stack machine is of critical importance to ensure proper handling of thread
-    // context switching which may occur during open-ended execution of interpreter.
+// Proper SoftCall:
+//  * save the current value of $ra onto the stack.
+//  * set a special return address that identifies our HLE function and it's current yield state
+//  * when the return address is detected from CPU, it bounces through HLE and resumes state
+//    machine execution -- pops old $ra off the stack.
+//
+// Using the VM's stack machine is of critical importance to ensure proper handling of thread
+// context switching which may occur during open-ended execution of interpreter.
 
-    // Pedantic: the PSX expects 16 bytes of shadow space below the current callstack.
-    //   Mostly things work without this, because it was only meant for use by debug builds to shadow values
-    //   passd by register ($a0 -> $a4).  --jstine
-
-    sp -= 0x10;
-    pc0 = pc;
-    ra = kSoftCallBaseRetAddr + (id*16);
-    sp += 0x10;
-}
+// Pedantic: the PSX expects 16 bytes of shadow space below the current callstack.
+//   Mostly things work without this, because it was only meant for use by debug builds to shadow values
+//   passd by register ($a0 -> $a4).  --jstine
 
 static void StackPush(u32 val) {
-    psxMu32ref(sp) = val;
     sp -= 4;
+    psxMu32ref(sp) = val;
 }
 
 static void StackPop(u32 val) {
-    sp += 4;
     val = psxMu32ref(sp);
+    sp += 4;
+}
+
+static SoftCallReturnId softCallYield(SoftCallReturnId id, u32 pc) {
+    StackPush(ra);
+    sp -= 0x10;     // shadow space (see notes earlier)
+
+    // perform equivalent of JAL -- update $ra and set PC.
+    ra = kSoftCallBaseRetAddr + (id*16);
+    pc0 = pc;
+    return id;
+}
+
+
+static void softCallResume() {
+    sp += 0x10;
+    StackPop(ra);
+}
+
+static void HleCallYield(SoftCallReturnId id) {
+    StackPush(ra);
+    ra = kSoftCallBaseRetAddr + (id*16);
+}
+
+static void HleCallResume() {
+    StackPop(ra);
+}
+
+static bool HleYieldCheck(SoftCallReturnId id) {
+    auto pc = pc0;
+    if (pc & kSoftCallBaseRetAddr) {
+        if (id == SCRI_None) return 0;
+        return (int)id == ((pc - kSoftCallBaseRetAddr) / 16);
+    }
+    return 1;
 }
 
 #if HLE_ENABLE_EVENT
-static inline void DeliverEvent(SoftCallReturnId id, u32 ev, u32 spec) {
-    if (Event[ev][spec].status != EvStACTIVE) return;
+static void HLEcb_DeliverEvent_Resume() {
+    assert (HleYieldCheck(SCRI_DeliverEvent_Resume));
+    softCallResume();
+    pc0 = ra;
+}
+
+static SoftCallReturnId DeliverEventYield(u32 ev, u32 spec) {
+    if (Event[ev][spec].status != EvStACTIVE) return SCRI_None;
 
 //	Event[ev][spec].status = EvStALREADY;
     if (Event[ev][spec].mode == EvMdINTR) {
-        softCall2(Event[ev][spec].fhandler);
-    } else Event[ev][spec].status = EvStALREADY;
+        return softCallYield(SCRI_DeliverEvent_Resume, Event[ev][spec].fhandler);
+    }
+
+    Event[ev][spec].status = EvStALREADY;
+    return SCRI_None;
 }
 #endif
 
@@ -1553,10 +1600,35 @@ void psxBios_LoadExec() { // 51
 void psxBios__bu_init() { // 70
     PSXBIOS_LOG("psxBios_%s\n", biosA0n[0x70]);
 
-    DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
-    DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
+    // Impl Note: honestly this would be easier rewritten as MIPS assembly.
+    //   It's just two JALs, but in order to maintain stack-engine state info at the HLE 
+    //   level, we need to implement a ton of paperwork that the interpreter would simply
+    //   handle for us via its own MIPS state machine. --jstine
 
-    pc0 = ra;
+    if (HleYieldCheck(SCRI_None)) {
+        HleCallYield(SCRI_psxBios__bu_init_00);
+        if (DeliverEventYield(0x11, 0x2)) { // 0xf0000011, 0x0004
+            return;
+        }
+        pc0 = ra;       // allows fallthrough to next HleYield state
+    }
+
+    if (HleYieldCheck(SCRI_psxBios__bu_init_00)) {
+        HleCallResume();
+        HleCallYield(SCRI_psxBios__bu_init_01);
+        if (DeliverEventYield(0x81, 0x2)) { // 0xf4000001, 0x0004
+            return;
+        }
+        pc0 = ra;
+    }
+
+    if (HleYieldCheck(SCRI_psxBios__bu_init_01)) {
+        HleCallResume();
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
 }
 #endif
 
@@ -1736,9 +1808,18 @@ void psxBios_DeliverEvent() { // 07
 
     PSXBIOS_LOG("psxBios_%s %x,%x\n", biosB0n[0x07], ev, spec);
 
-    DeliverEvent(ev, spec);
+    HleCallYield(SCRI_psxBios_DeliverEvent_00);
+    if (DeliverEventYield(ev, spec)) {
+        return;
+    }
 
-    pc0 = ra;
+    if (HleYieldCheck(SCRI_psxBios_DeliverEvent_00)) {
+        HleCallResume();
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
 }
 
 void psxBios_OpenEvent() { // 08
@@ -2954,7 +3035,9 @@ void psxBiosInitFull() {
     base = 0x1000;
     size = sizeof(EvCB) * 32;
     Event = (EvCB *)(PSX_ROM_START + base); base += size * 6;
-    memset(Event, 0, size * 6);
+    if (HLE_FULL) {
+        memset(Event, 0, size * 6);
+    }
     HwEV = Event;
     EvEV = Event + 32;
     RcEV = Event + 32 * 2;
