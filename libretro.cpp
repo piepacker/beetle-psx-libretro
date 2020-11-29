@@ -4145,19 +4145,30 @@ void retro_run(void)
     bool hasMswDebugger = ::IsDebuggerPresent();
     g_dbg_WasAttached = g_dbg_WasAttached || hasMswDebugger;        // track it, because if debugger detaches, the process may close itself...
 
+    static bool retro_attach_log = 0;
     if (!hasMswDebugger) {
         if (g_dbg_WasAttached) {
             if (const char* env = getenv("RETRO_DETACH_KILL"); env && env[0] == '1') {
+                printf("\nTerminating process due to debugger detachment (RETRO_DETACH_KILL=1)\n");
                 exit(0);
             }
         }
 
         if (const char* env = getenv("RETRO_ATTACH_WAIT"); env && env[0] == '1') {
+            if (!retro_attach_log) {
+                retro_attach_log = 1;
+                printf("\nWaiting for debugger attachment (RETRO_ATTACH_WAIT=1) ...\n");
+                fflush(nullptr);    
+            }
             ::Sleep(100);
             return;
         }
     }
 
+    if (retro_attach_log && hasMswDebugger) {
+        printf("** Debugger attached, execution resuming...\n");
+    }
+    retro_attach_log = 0;
 
    bool updated = false;
    //code to implement audio and video disable is not yet implemented
