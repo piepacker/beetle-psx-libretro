@@ -1498,7 +1498,7 @@ void psxBios_FlushCache() { // 44
 #if HLE_PCSX_IFC
 #define GPU_W_DATA(dat)     GPU_writeData  (dat)
 #define GPU_W_STATUS(dat)   GPU_writeStatus(dat)
-#define GPU_R_STATUS(dat)   GPU_readStatus (dat)
+#define GPU_R_STATUS()      GPU_readStatus ()
 #define DMA_W(addr, val)    psxHwWrite32(addr, val)
 #define DMA_R(addr)         psxHwRead32 (addr)
 #endif
@@ -1506,7 +1506,7 @@ void psxBios_FlushCache() { // 44
 #if HLE_MEDNAFEN_IFC
 #define GPU_W_DATA(dat)     GPU_Write(0, 0, dat)
 #define GPU_W_STATUS(dat)   GPU_Write(0, 4, dat)
-#define GPU_R_STATUS(dat)   GPU_Read(0, 4)
+#define GPU_R_STATUS()      GPU_Read(0, 4)
 #define DMA_W(addr, val)    DMA_Write(0, addr, val)
 #define DMA_R(addr)         DMA_Read (0, addr)
 #endif
