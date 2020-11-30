@@ -51,7 +51,7 @@
 #define HLE_ENABLE_RCNT			(HLE_FULL || 1)
 #define HLE_ENABLE_PAD			(HLE_FULL || 0)
 #define HLE_ENABLE_GPU			(HLE_FULL || 1)
-#define HLE_ENABLE_MCD			(HLE_FULL || 0)
+#define HLE_ENABLE_MCD			(HLE_FULL || 1)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
 #define HLE_ENABLE_THREAD       (HLE_FULL || 1)
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
@@ -371,9 +371,14 @@ void VmcWriteNV(int port, int slot, const void* src, int size) {
 #if HLE_MEDNAFEN_IFC && HLE_ENABLE_MCD
 #include "mednafen/psx/frontio.h"
 extern FrontIO *PSX_FIO;        // defined by libretro. dunno why this isn't baked into the PSX core for mednafen. --jstine
-void VmcWriteNV(int port, int slot, const void* src, int size) {
+void VmcWriteNV(int port, int slot, const void* src, int offset, int size) {
     auto mcd = PSX_FIO->GetMemcardDevice(port);
-    mcd->WriteNV((uint8_t*)src, a1 * 128, 128);
+    mcd->WriteNV((const uint8_t*)src, offset, size);
+}
+
+void VmcReadNV(int port, int slot, void* dest, int offset, int size) {
+    auto mcd = PSX_FIO->GetMemcardDevice(port);
+    mcd->ReadNV((uint8_t*)dest, offset, size);
 }
 #endif
 
@@ -533,14 +538,21 @@ static const u32 kSoftCallBaseRetAddr = 0x8100'0000;
 enum SoftCallReturnId {
     SCRI_None = 0,
 
-    SCRI_DeliverEvent_FuncEntry,
     SCRI_DeliverEvent_Resume,
+
+    SCRI_psxBios_DeliverEvent_00,
 
     SCRI_psxBios__bu_init_00,
     SCRI_psxBios__bu_init_01,
     SCRI_psxBios__bu_init_02,
 
-    SCRI_psxBios_DeliverEvent_00,
+    SCRI_psxBios__card_load_00,
+    SCRI_psxBios__card_info_00,
+
+    SCRI_psxBios__card_read_00,
+    SCRI_psxBios__card_write_00,
+
+    SCRI_MAX_COUNT
 };
 
 // Proper SoftCall:
@@ -591,11 +603,19 @@ static void HleCallResume() {
     StackPop(ra);
 }
 
+static bool IsHlePC(u32 pc) {
+    return ((pc & 0xff00'0000) == kSoftCallBaseRetAddr);
+}
+
+static SoftCallReturnId HleGetCallId(u32 pc) {
+    return (SoftCallReturnId)((pc - kSoftCallBaseRetAddr) / 16);
+}
+
 static bool HleYieldCheck(SoftCallReturnId id) {
     auto pc = pc0;
-    if (pc & kSoftCallBaseRetAddr) {
+    if (IsHlePC(pc)) {
         if (id == SCRI_None) return 0;
-        return (int)id == ((pc - kSoftCallBaseRetAddr) / 16);
+        return (int)id == HleGetCallId(pc);
     }
     return 1;
 }
@@ -614,9 +634,10 @@ static SoftCallReturnId DeliverEventYield(u32 ev, u32 spec) {
     if (Event[ev][spec].mode == EvMdINTR) {
         return softCallYield(SCRI_DeliverEvent_Resume, Event[ev][spec].fhandler);
     }
-
-    Event[ev][spec].status = EvStALREADY;
-    return SCRI_None;
+    else {
+        Event[ev][spec].status = EvStALREADY;
+        return SCRI_None;
+    }
 }
 #endif
 
@@ -1697,9 +1718,23 @@ void psxBios__card_info() { // ab
     card_active_chan = a0;
 
 //	DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
-    DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
+    
+    if (HleYieldCheck(SCRI_None)) {
+        HleCallYield(SCRI_psxBios__card_info_00);
+        if (DeliverEventYield(0x81, 0x2)) { // 0xf4000001, 0x0004
+            return;
+        }
+        pc0 = ra;
+    }
 
-    v0 = 1; pc0 = ra;
+    if (HleYieldCheck(SCRI_psxBios__card_info_00)) {
+        HleCallResume();
+        v0 = 1;
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
 }
 
 void psxBios__card_load() { // ac
@@ -1708,9 +1743,23 @@ void psxBios__card_load() { // ac
     card_active_chan = a0;
 
 //	DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
-    DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
 
-    v0 = 1; pc0 = ra;
+    if (HleYieldCheck(SCRI_None)) {
+        HleCallYield(SCRI_psxBios__card_load_00);
+        if (DeliverEventYield(0x81, 0x2)) { // 0xf4000001, 0x0004
+            return;
+        }
+        pc0 = ra;
+    }
+
+    if (HleYieldCheck(SCRI_psxBios__card_load_00)) {
+        HleCallResume();
+        v0 = 1;
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
 }
 #endif
 
@@ -2492,40 +2541,66 @@ void psxBios__card_write() { // 0x4e
 
     PSXBIOS_LOG("psxBios_%s: %x,%x,%x\n", biosB0n[0x4e], a0, a1, a2);
 
-    // is card_active_chan supposed to be slot? --jstine
-    card_active_chan = a0;
-    int port = a0 >> 4;
-    int slot = 0;
+    if (HleYieldCheck(SCRI_None)) {
+        // is card_active_chan supposed to be slot? --jstine
+        card_active_chan = a0;
+        int port = a0 >> 4;
+        int slot = 0;
 
-    if (auto *pa2 = Ra2) {
-        auto mcd = PSX_FIO->GetMemcardDevice(port);
-        VmcWriteNV(port, slot, pa2, a1 * 128, 128);
+        if (auto *pa2 = Ra2) {
+            auto mcd = PSX_FIO->GetMemcardDevice(port);
+            VmcWriteNV(port, slot, pa2, a1 * 128, 128);
+        }
+
+        HleCallYield(SCRI_psxBios__card_write_00);
+        if (DeliverEventYield(0x11, 0x2)) { // 0xf0000011, 0x0004
+            return;
+        }
+        pc0 = ra;
     }
 
-    DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
-//	DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
+    if (HleYieldCheck(SCRI_psxBios__card_info_00)) {
+        HleCallResume();
+        v0 = 1;
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
 
-    v0 = 1; pc0 = ra;
+//	DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
 }
 
 void psxBios__card_read() { // 0x4f
-    void *pa2 = Ra2;
-    int port;
 
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x4f]);
 
-    card_active_chan = a0;
-    port = a0 >> 4;
+    if (HleYieldCheck(SCRI_None)) {
+        card_active_chan = a0;
+        int port = a0 >> 4;
+        int slot = 0;
 
-    if (pa2) {
-        if (port == 0) {
-            memcpy(pa2, Mcd1Data + a1 * 128, 128);
-        } else {
-            memcpy(pa2, Mcd2Data + a1 * 128, 128);
+        if (auto *pa2 = Ra2) {
+            auto mcd = PSX_FIO->GetMemcardDevice(port);
+            VmcReadNV(port, slot, pa2, a1 * 128, 128);
         }
+
+        HleCallYield(SCRI_psxBios__card_read_00);
+        if (DeliverEventYield(0x11, 0x2)) { // 0xf0000011, 0x0004
+            return;
+        }
+        pc0 = ra;
     }
 
-    DeliverEvent(0x11, 0x2); // 0xf0000011, 0x0004
+    if (HleYieldCheck(SCRI_psxBios__card_info_00)) {
+        HleCallResume();
+        v0 = 1;
+        pc0 = ra;
+    }
+    else {
+        assert(false);
+    }
+
 //	DeliverEvent(0x81, 0x2); // 0xf4000001, 0x0004
 
     v0 = 1; pc0 = ra;
@@ -2638,13 +2713,30 @@ void psxBios_SysDeqIntRP() { // 03
 }
 #endif
 
-using VoidFunc = void (*)();
+using VoidFnptr = void (*)();
 
-using HLE_BIOS_TABLE = VoidFunc[256]; 
+using HLE_BIOS_TABLE = VoidFnptr[256]; 
 
 HLE_BIOS_TABLE biosA0 = {};
 HLE_BIOS_TABLE biosB0 = {};
 HLE_BIOS_TABLE biosC0 = {};
+
+
+VoidFnptr HLE_Call_Table[SCRI_MAX_COUNT];
+
+void HleInitCallTable() {
+
+    HLE_Call_Table[SCRI_DeliverEvent_Resume     ] = HLEcb_DeliverEvent_Resume;
+    HLE_Call_Table[SCRI_psxBios_DeliverEvent_00 ] = psxBios_DeliverEvent     ;
+    HLE_Call_Table[SCRI_psxBios__bu_init_00     ] = psxBios__bu_init         ;
+    HLE_Call_Table[SCRI_psxBios__bu_init_01     ] = psxBios__bu_init         ;
+    HLE_Call_Table[SCRI_psxBios__bu_init_02     ] = psxBios__bu_init         ;
+    HLE_Call_Table[SCRI_psxBios__card_load_00   ] = psxBios__card_load       ;
+    HLE_Call_Table[SCRI_psxBios__card_info_00   ] = psxBios__card_info       ;
+    HLE_Call_Table[SCRI_psxBios__card_read_00   ] = psxBios__card_read       ;
+    HLE_Call_Table[SCRI_psxBios__card_write_00  ] = psxBios__card_write      ;
+
+};
 
 #include "sjisfont.h"
 
@@ -2657,6 +2749,9 @@ void psxBiosResetToNone() {
 }
 
 void psxBiosInit_StdLib() {
+
+    HleInitCallTable();
+
     int i;
 
     biosA0[0x3e] = psxBios_puts;
@@ -3354,6 +3449,32 @@ bool psxbios_invoke_any(const HLE_BIOS_TABLE& table) {
 bool psxbios_invoke_A0() { return psxbios_invoke_any(biosA0); }
 bool psxbios_invoke_B0() { return psxbios_invoke_any(biosB0); }
 bool psxbios_invoke_C0() { return psxbios_invoke_any(biosC0); }
+
+bool HleDispatchCall(u32 pc) {
+
+    if (IsHlePC(pc)) {
+        auto id = HleGetCallId(pc);
+        assert((u32)id < SCRI_MAX_COUNT);
+        HLE_Call_Table[id]();
+        return 1;
+    }
+
+    if(pc == 0xA0) {
+        return psxbios_invoke_A0();
+    }
+
+    if(pc == 0xB0)
+    {
+        return psxbios_invoke_B0();
+    }
+
+    if(pc == 0xC0)
+    {
+        return psxbios_invoke_C0();
+    }
+
+    return 0;
+}
 
 
 // SAVESTATE

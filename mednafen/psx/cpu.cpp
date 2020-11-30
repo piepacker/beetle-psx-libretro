@@ -726,34 +726,14 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
    }
 #endif
 
-extern bool psxbios_invoke_A0();
-extern bool psxbios_invoke_B0();
-extern bool psxbios_invoke_C0();
+extern bool HleDispatchCall(u32 pc);
 
-    if(PC == 0xA0)
-    {
-      if(psxbios_invoke_A0()) {
-        PC = GPR[31];
+    BACKED_PC = PC;
+    if (HleDispatchCall(PC)) {
+        PC = BACKED_PC;
         new_PC = PC + 4;
-      }
+        continue;
     }
-
-    if(PC == 0xB0)
-    {
-      if(psxbios_invoke_B0()) {
-        PC = GPR[31];
-        new_PC = PC + 4;
-      }
-    }
-
-    if(PC == 0xC0)
-    {
-      if(psxbios_invoke_C0()) {
-        PC = GPR[31];
-        new_PC = PC + 4;
-      }
-    }
-
 
 #if NOT_LIBRETRO
    if(BIOSPrintMode)
