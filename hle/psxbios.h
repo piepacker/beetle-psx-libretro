@@ -20,9 +20,9 @@
 #ifndef __PSXBIOS_H__
 #define __PSXBIOS_H__
 
-extern const char *biosA0n[256];
-extern const char *biosB0n[256];
-extern const char *biosC0n[256];
+extern const char * const biosA0n[256];
+extern const char * const biosB0n[256];
+extern const char * const biosC0n[256];
 
 void psxBiosInit();
 void psxBiosShutdown();

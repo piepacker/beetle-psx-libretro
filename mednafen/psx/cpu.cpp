@@ -730,7 +730,9 @@ extern bool HleDispatchCall(u32 pc);
 
     BACKED_PC = PC;
     if (HleDispatchCall(PC)) {
-        PC = BACKED_PC;
+        //PC = GPR[31]; //BACKED_PC;
+        assert(BACKED_PC == GPR[31]);
+        PC = GPR[31]; //BACKED_PC;
         new_PC = PC + 4;
         continue;
     }

@@ -127,7 +127,7 @@ struct EXE_HEADER {
 #undef SysPrintf
 #define SysPrintf printf
 
-const char * biosA0n[256] = {
+const char * const biosA0n[256] = {
 // 0x00
     "open",		"lseek",	"read",		"write",
     "close",	"ioctl",	"exit",		"sys_a0_07",
@@ -188,7 +188,7 @@ const char * biosA0n[256] = {
     "?? sub_function",
 };
 
-const char *biosB0n[256] = {
+const char * const biosB0n[256] = {
 // 0x00
     "SysMalloc",		"sys_b0_01",	"sys_b0_02",	"sys_b0_03",
     "sys_b0_04",		"sys_b0_05",	"sys_b0_06",	"DeliverEvent",
@@ -221,7 +221,7 @@ const char *biosB0n[256] = {
     "_card_status",		"_card_wait",
 };
 
-const char *biosC0n[256] = {
+const char * const biosC0n[256] = {
 // 0x00
     "InitRCnt",			  "InitException",		"SysEnqIntRP",		"SysDeqIntRP",
     "get_free_EvCB_slot", "get_free_TCB_slot",	"ExceptionHandler",	"InstallExeptionHandler",
@@ -1326,6 +1326,7 @@ void psxBios_getchar() { //0x3b
 
 void psxBios_putchar() { // 3d
     raw_putc(a0);
+    pc0 = ra;
 }
 
 void psxBios_puts() { // 3e/3f
@@ -1927,6 +1928,8 @@ void psxBios_WaitEvent() { // 0a
     spec = (a0 >> 8) & 0xff;
 
     PSXBIOS_LOG("psxBios_%s %x,%x\n", biosB0n[0x0a], ev, spec);
+
+    assert(spec < 32);
 
     Event[ev][spec].status = EvStACTIVE;
 
@@ -3435,10 +3438,11 @@ void psxBiosException() {
 }
 #endif
 
-bool psxbios_invoke_any(const HLE_BIOS_TABLE& table) {
+bool psxbios_invoke_any(const HLE_BIOS_TABLE& table, const char * const names[256]) {
     int call = t1 & 0xff;
 
     if (table[call]) {
+        PSXBIOS_LOG("PSX_BIOS: %s\n", names[call]);
         table[call]();
         return 1;
     }
@@ -3446,9 +3450,9 @@ bool psxbios_invoke_any(const HLE_BIOS_TABLE& table) {
     return 0;
 }
 
-bool psxbios_invoke_A0() { return psxbios_invoke_any(biosA0); }
-bool psxbios_invoke_B0() { return psxbios_invoke_any(biosB0); }
-bool psxbios_invoke_C0() { return psxbios_invoke_any(biosC0); }
+bool psxbios_invoke_A0() { return psxbios_invoke_any(biosA0, biosA0n); }
+bool psxbios_invoke_B0() { return psxbios_invoke_any(biosB0, biosB0n); }
+bool psxbios_invoke_C0() { return psxbios_invoke_any(biosC0, biosC0n); }
 
 bool HleDispatchCall(u32 pc) {
 
