@@ -731,8 +731,8 @@ extern bool HleDispatchCall(u32 pc);
     BACKED_PC = PC;
     if (HleDispatchCall(PC)) {
         //PC = GPR[31]; //BACKED_PC;
-        assert(BACKED_PC == GPR[31]);
-        PC = GPR[31]; //BACKED_PC;
+        assert(BACKED_PC != PC);    // happens if the caller forgot to set pc = ra or similar.
+        PC = BACKED_PC;
         new_PC = PC + 4;
         continue;
     }
