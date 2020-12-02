@@ -573,7 +573,7 @@ static void StackPush(u32 val) {
     psxMu32ref(sp) = val;
 }
 
-static void StackPop(u32 val) {
+static void StackPop(u32& val) {
     val = psxMu32ref(sp);
     sp += 4;
 }
@@ -2562,7 +2562,7 @@ void psxBios__card_write() { // 0x4e
         pc0 = ra;
     }
 
-    if (HleYieldCheck(SCRI_psxBios__card_info_00)) {
+    if (HleYieldCheck(SCRI_psxBios__card_write_00)) {
         HleCallResume();
         v0 = 1;
         pc0 = ra;
@@ -2595,10 +2595,8 @@ void psxBios__card_read() { // 0x4f
         pc0 = ra;
     }
 
-    if (HleYieldCheck(SCRI_psxBios__card_info_00)) {
+    if (HleYieldCheck(SCRI_psxBios__card_read_00)) {
         HleCallResume();
-        v0 = 1;
-        pc0 = ra;
     }
     else {
         assert(false);
