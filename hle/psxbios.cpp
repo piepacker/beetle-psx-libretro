@@ -35,10 +35,15 @@
 //#   define PSXBIOS_LOG(...) (void(0))
 #endif
 
+#if !defined(CPU_LOG)
+#   define PSXBIOS_LOG(...) (printf(__VA_ARGS__), fflush(nullptr))
+//#   define PSXBIOS_LOG(...) (void(0))
+#endif
+
 #define HLE_FULL                0       // enables full ROM-less HLE support
 
 // HLE exception handler depends on full HLE (everything in the list has to be 1)
-#define HLE_ENABLE_EXCEPTION    (HLE_FULL && 0)
+#define HLE_ENABLE_EXCEPTION    (HLE_FULL && 1)
 
 // Dev notes:
 //  * Tekken 2/3 do not use threads
@@ -47,15 +52,19 @@
 //  * Tekken 2/3 do not use GPU APIs
 
 #define HLE_ENABLE_HEAP         (HLE_FULL || 1)
-#define HLE_ENABLE_FILEIO		(HLE_FULL || 0)        // fileio depends on HLE memcard ?
-#define HLE_ENABLE_RCNT			(HLE_FULL || 1)
-#define HLE_ENABLE_PAD			(HLE_FULL || 0)
 #define HLE_ENABLE_GPU			(HLE_FULL || 1)
-#define HLE_ENABLE_MCD			(HLE_FULL || 1)
-#define HLE_ENABLE_LOADEXEC		(HLE_FULL || 0)       // depends on ISO9660 filesystem API
+#define HLE_ENABLE_RCNT			(HLE_FULL || 1)
+
+// Rest of these are not useful due to interdependence on exception handler and full hle.
+
 #define HLE_ENABLE_THREAD       (HLE_FULL || 1)
-#define HLE_ENABLE_ENTRYINT     (HLE_FULL || 0)
+#define HLE_ENABLE_MCD			(HLE_FULL || 1)
 #define HLE_ENABLE_EVENT        (HLE_FULL || 1)
+
+#define HLE_ENABLE_FILEIO		(HLE_FULL && 0)        // fileio depends on HLE memcard ?
+#define HLE_ENABLE_PAD			(HLE_FULL && 0)
+#define HLE_ENABLE_LOADEXEC		(HLE_FULL && 0)       // depends on ISO9660 filesystem API
+#define HLE_ENABLE_ENTRYINT     (HLE_FULL && 0)
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
 // the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
@@ -90,6 +99,7 @@ static bool hle_config_env_thread   () { return hle_config_get_bool("THREAD"    
 static bool hle_config_env_entryint () { return hle_config_get_bool("ENTRYINT"  ); }
 static bool hle_config_env_heap     () { return hle_config_get_bool("HEAP"      ); }
 static bool hle_config_env_event    () { return hle_config_get_bool("EVENT"     ); }
+static bool hle_config_env_full     () { return hle_config_get_bool("FULL"      ); }
 
 using u32 = uint32_t;
 using s32 = int32_t;
@@ -505,10 +515,11 @@ static u32 *jmp_int = NULL;
 static u32 SysIntRP[8];
 #endif
 
-#if HLE_ENABLE_PAD
+#if HLE_ENABLE_PAD || HLE_FULL
 static int *pad_buf = NULL;
 static char *pad_buf1 = NULL, *pad_buf2 = NULL;
 static int pad_buf1len, pad_buf2len;
+static int pad_stopped = 1;
 #endif
 
 #if HLE_ENABLE_MCD
@@ -2341,8 +2352,8 @@ void psxBios_StartPAD() { // 13
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x13]);
 
 	pad_stopped = 0;
-    psxHwWrite16(0x1f801074, (unsigned short)(psxHwRead16(0x1f801074) | 0x1));
-    CP0_Status |= 0x401;
+    Write_IMASK((unsigned short)(Read_IMASK() | 0x1));
+    CP0_STATUS |= 0x401;
     pc0 = ra;
 }
 
@@ -2365,10 +2376,10 @@ void psxBios_PAD_init() { // 15
 		return;
 	}
 
-    psxHwWrite16(0x1f801074, (u16)(psxHwRead16(0x1f801074) | 0x1));
+    Write_IMASK((u16)(Read_IMASK(0x1f801074) | 0x1));
     pad_buf = (int *)Ra1;
     *pad_buf = -1;
-    CP0_Status |= 0x401;
+    CP0_STATUS |= 0x401;
 	v0 = 2;
     pc0 = ra;
 }
@@ -2497,7 +2508,7 @@ static void buopen(int mcd, char *ptr, char *cfg)
 	}
 	if (a1 & 0x200 && v0 == -1) { /* FCREAT */
 		for (i=1; i<16; i++) {
-			int j, xor, nblk = a1 >> 16;
+			int j, xorx, nblk = a1 >> 16;
 			char *pptr, *fptr2;
 			char *fptr = mcd_data + 128 * i;
 
@@ -2520,16 +2531,16 @@ static void buopen(int mcd, char *ptr, char *cfg)
 					fptr2[0] = j < nblk ? 0x52 : 0x53;
 					pptr[8] = i - 1;
 					pptr[9] = 0;
-					for (k=0, xor=0; k<127; k++) xor^= pptr[k];
-					pptr[127] = xor;
+					for (k=0, xorx=0; k<127; k++) xorx^= pptr[k];
+					pptr[127] = xorx;
 					pptr = fptr2;
 					break;
 				}
 				/* shouldn't this return ENOSPC if i == 16? */
 			}
 			pptr[8] = pptr[9] = 0xff;
-			for (j=0, xor=0; j<127; j++) xor^= pptr[j];
-			pptr[127] = xor;
+			for (j=0, xorx=0; j<127; j++) xorx^= pptr[j];
+			pptr[127] = xorx;
 			SysPrintf("openC %s %d\n", ptr, nblk);
 			v0 = 1 + mcd;
 			/* just go ahead and resave them all */
@@ -2719,35 +2730,39 @@ static size_t strlen_internal(char* p)
 	return size_of_array;
 }
 
-#define bufile(mcd) { \
-	size_t size_of_name = strlen_internal(dir->name); \
-	while (nfile < 16) { \
-		int match=1; \
- \
-		ptr = Mcd##mcd##Data + 128 * (nfile + 1); \
-		nfile++; \
-		if ((*ptr & 0xF0) != 0x50) continue; \
-		/* Bug link files show up as free block. */ \
-		if (!ptr[0xa]) continue; \
-		ptr+= 0xa; \
-		if (pfile[0] == 0) { \
-			strncpy(dir->name, ptr, sizeof(dir->name) - 1); \
-			if (size_of_name < sizeof(dir->name)) dir->name[size_of_name] = '\0'; \
-		} else for (i=0; i<20; i++) { \
-			if (pfile[i] == ptr[i]) { \
-								dir->name[i] = ptr[i]; continue; } \
-			if (pfile[i] == '?') { \
-				dir->name[i] = ptr[i]; continue; } \
-			if (pfile[i] == '*') { \
-				strcpy(dir->name+i, ptr+i); break; } \
-			match = 0; break; \
-		} \
-		SysPrintf("%d : %s = %s + %s (match=%d)\n", nfile, dir->name, pfile, ptr, match); \
-		if (match == 0) { continue; } \
-		dir->size = 8192; \
-		v0 = _dir; \
-		break; \
-	} \
+static void bufile(const u8* mcdraw) {
+    u32 _dir = a1;
+    struct DIRENTRY *dir = (struct DIRENTRY *)Ra1;
+
+	size_t size_of_name = strlen_internal(dir->name);
+
+	while (nfile < 16) {
+		int match=1;
+ 		auto* ptr = mcdraw + 128 * (nfile + 1);
+
+		nfile++;
+		if ((*ptr & 0xF0) != 0x50) continue;
+		/* Bug link files show up as free block. */
+		if (!ptr[0xa]) continue;
+		ptr+= 0xa;
+		if (pfile[0] == 0) {
+			strncpy(dir->name, (char*)ptr, sizeof(dir->name) - 1);
+			if (size_of_name < sizeof(dir->name)) dir->name[size_of_name] = '\0';
+		} else for (i=0; i<20; i++) {
+			if (pfile[i] == ptr[i]) {
+								dir->name[i] = ptr[i]; continue; }
+			if (pfile[i] == '?') {
+				dir->name[i] = ptr[i]; continue; }
+			if (pfile[i] == '*') {
+				strcpy(dir->name+i, ptr+i); break; }
+			match = 0; break;
+		}
+		SysPrintf("%d : %s = %s + %s (match=%d)\n", nfile, dir->name, pfile, ptr, match);
+		if (match == 0) { continue; }
+		dir->size = 8192;
+		v0 = _dir;
+		break;
+	}
 }
 
 /*
@@ -2755,15 +2770,15 @@ static size_t strlen_internal(char* p)
  */
  
 void psxBios_firstfile() { // 42
-    struct DIRENTRY *dir = (struct DIRENTRY *)Ra1;
     void *pa0 = Ra0;
-    u32 _dir = a1;
     char *ptr;
     int i;
 
     PSXBIOS_LOG("psxBios_%s: %s\n", biosB0n[0x42], Ra0);
 
     v0 = 0;
+
+    auto mcd = PSX_FIO->GetMemcardDevice(0);
 
 	if (pa0) {
 		strcpy(ffile, pa0);
@@ -2772,7 +2787,7 @@ void psxBios_firstfile() { // 42
 		if (!strncmp(pa0, "bu00", 4)) {
 			// firstfile() calls _card_read() internally, so deliver it's event
 			DeliverEvent(0x11, 0x2);
-			bufile(1);
+			bufile(VmcReadNV);
 		} else if (!strncmp(pa0, "bu10", 4)) {
 			// firstfile() calls _card_read() internally, so deliver it's event
 			DeliverEvent(0x11, 0x2);
@@ -2810,15 +2825,15 @@ void psxBios_nextfile() { // 43
 
 #define burename(mcd) { \
     for (i=1; i<16; i++) { \
-        int namelen, j, xor = 0; \
+        int namelen, j, xorx = 0; \
         ptr = Mcd##mcd##Data + 128 * i; \
         if ((*ptr & 0xF0) != 0x50) continue; \
         if (strcmp(Ra0+5, ptr+0xa)) continue; \
         namelen = strlen(Ra1+5); \
         memcpy(ptr+0xa, Ra1+5, namelen); \
         memset(ptr+0xa+namelen, 0, 0x75-namelen); \
-        for (j=0; j<127; j++) xor^= ptr[j]; \
-        ptr[127] = xor; \
+        for (j=0; j<127; j++) xorx^= ptr[j]; \
+        ptr[127] = xorx; \
         SaveMcd(Config.Mcd##mcd, Mcd##mcd##Data, 128 * i + 0xa, 0x76); \
         v0 = 1; \
         break; \
@@ -3602,8 +3617,8 @@ void psxBiosInitFull() {
     memset(FDesc, 0, sizeof(FDesc));
 #endif
 
-#if HLE_ENABLE_EMPTY_ROM
-    if (hle_config_env_norom()) {
+#if HLE_FULL
+    if (hle_config_env_full()) {
         // not sure about these, the HLE seems to skip them which, I expect, is only wise
         // if we're bypassing BIOS entirely. --jstine
 
@@ -3703,86 +3718,67 @@ void psxBiosShutdown() {
 void biosInterrupt() {
     int i, bufcount;
 
-//	if (psxHu32(0x1070) & 0x1) { // Vsync
-        if (pad_buf != NULL) {
-            u32 *buf = (u32*)pad_buf;
+    // Looks like this is polling the pads on every interrupt, which is definitely
+    // not what we want. Will have to dig into it later and see if I can figure out why
+    // someone removed the Vsync condition gate below (likely some hack) --jstine
 
-            if (!Config.UseNet) {
-                PAD1_startPoll(1);
-                if (PAD1_poll(0x42) == 0x23) {
-                    PAD1_poll(0);
-                    *buf = PAD1_poll(0) << 8;
-                    *buf |= PAD1_poll(0);
-                    PAD1_poll(0);
-                    *buf &= ~((PAD1_poll(0) > 0x20) ? 1 << 6 : 0);
-                    *buf &= ~((PAD1_poll(0) > 0x20) ? 1 << 7 : 0);
-                } else {
-                    PAD1_poll(0);
-                    *buf = PAD1_poll(0) << 8;
-                    *buf|= PAD1_poll(0);
-                }
+//	if (Read_ISTAT() & 0x1) { // Vsync
+    if (pad_buf != NULL) {
+        u32 *buf = (u32*)pad_buf;
 
-                PAD2_startPoll(2);
-                if (PAD2_poll(0x42) == 0x23) {
-                    PAD2_poll(0);
-                    *buf |= PAD2_poll(0) << 24;
-                    *buf |= PAD2_poll(0) << 16;
-                    PAD2_poll(0);
-                    *buf &= ~((PAD2_poll(0) > 0x20) ? 1 << 22 : 0);
-                    *buf &= ~((PAD2_poll(0) > 0x20) ? 1 << 23 : 0);
-                } else {
-                    PAD2_poll(0);
-                    *buf |= PAD2_poll(0) << 24;
-                    *buf |= PAD2_poll(0) << 16;
-                }
-            } else {
-                u16 data;
-
-                PAD1_startPoll(1);
-                PAD1_poll(0x42);
-                PAD1_poll(0);
-                data = PAD1_poll(0) << 8;
-                data |= PAD1_poll(0);
-
-                if (NET_sendPadData(&data, 2) == -1)
-                    netError();
-
-                if (NET_recvPadData(&((u16*)buf)[0], 1) == -1)
-                    netError();
-                if (NET_recvPadData(&((u16*)buf)[1], 2) == -1)
-                    netError();
-            }
-        }
-        if (Config.UseNet && pad_buf1 != NULL && pad_buf2 != NULL) {
-            psxBios_PADpoll(1);
-
-            if (NET_sendPadData(pad_buf1, i) == -1)
-                netError();
-
-            if (NET_recvPadData(pad_buf1, 1) == -1)
-                netError();
-            if (NET_recvPadData(pad_buf2, 2) == -1)
-                netError();
+        #if HLE_ENABLE_PAD
+        PAD1_startPoll(1);
+        if (PAD1_poll(0x42) == 0x23) {
+            PAD1_poll(0);
+            *buf = PAD1_poll(0) << 8;
+            *buf |= PAD1_poll(0);
+            PAD1_poll(0);
+            *buf &= ~((PAD1_poll(0) > 0x20) ? 1 << 6 : 0);
+            *buf &= ~((PAD1_poll(0) > 0x20) ? 1 << 7 : 0);
         } else {
-			if (!pad_stopped)  {
-                if (pad_buf1) {
-                    psxBios_PADpoll(1);
-                }
-
-                if (pad_buf2) {
-                    psxBios_PADpoll(2);
-                }
-            }
+            PAD1_poll(0);
+            *buf = PAD1_poll(0) << 8;
+            *buf|= PAD1_poll(0);
         }
 
-    if (psxHu32(0x1070) & 0x1) { // Vsync
+        PAD2_startPoll(2);
+        if (PAD2_poll(0x42) == 0x23) {
+            PAD2_poll(0);
+            *buf |= PAD2_poll(0) << 24;
+            *buf |= PAD2_poll(0) << 16;
+            PAD2_poll(0);
+            *buf &= ~((PAD2_poll(0) > 0x20) ? 1 << 22 : 0);
+            *buf &= ~((PAD2_poll(0) > 0x20) ? 1 << 23 : 0);
+        } else {
+            PAD2_poll(0);
+            *buf |= PAD2_poll(0) << 24;
+            *buf |= PAD2_poll(0) << 16;
+        }
+        #endif
+    }
+
+	if (!pad_stopped)  {
+        #if HLE_ENABLE_PAD
+        if (pad_buf1) {
+            psxBios_PADpoll(1);
+        }
+
+        if (pad_buf2) {
+            psxBios_PADpoll(2);
+        }
+        #endif
+    }
+
+    auto istat = Read_ISTAT();
+
+    if (istat & 0x1) { // Vsync
         if (RcEV[3][1].status == EvStACTIVE) {
-            softCall(RcEV[3][1].fhandler);
+            softCallYield(SCRI_biosInterrupt_Vsync, RcEV[3][1].fhandler);
 //			hwWrite32(0x1f801070, ~(1));
         }
     }
 
-    if (psxHu32(0x1070) & 0x70) { // Rcnt 0,1,2
+    if (istat & 0x70) { // Rcnt 0,1,2
         int i;
 
         for (i = 0; i < 3; i++) {
@@ -3795,9 +3791,7 @@ void biosInterrupt() {
         }
     }
 }
-#endif 
 
-#if HLE_ENABLE_EXCEPTION
 void psxBiosException() {
     int i;
 
