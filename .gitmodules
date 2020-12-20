@@ -1,0 +1,3 @@
+[submodule "libpsdisc"]
+	path = libpsdisc
+	url = https://github.com/piepacker/libpsdisc
