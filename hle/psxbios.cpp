@@ -61,10 +61,10 @@
 #define HLE_ENABLE_MCD			(HLE_FULL || 1)
 #define HLE_ENABLE_EVENT        (HLE_FULL || 1)
 
-#define HLE_ENABLE_FILEIO		(HLE_FULL && 0)        // fileio depends on HLE memcard ?
+#define HLE_ENABLE_FILEIO		(HLE_FULL && 0)       // fileio depends on HLE memcard ?
 #define HLE_ENABLE_PAD			(HLE_FULL && 0)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL && 0)       // depends on ISO9660 filesystem API
-#define HLE_ENABLE_ENTRYINT     (HLE_FULL && 0)
+#define HLE_ENABLE_ENTRYINT     (HLE_FULL && 1)
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
 // the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
@@ -3773,7 +3773,8 @@ void biosInterrupt() {
 
     if (istat & 0x1) { // Vsync
         if (RcEV[3][1].status == EvStACTIVE) {
-            softCallYield(SCRI_biosInterrupt_Vsync, RcEV[3][1].fhandler);
+            assert(false);
+            //softCallYield(SCRI_biosInterrupt_Vsync, RcEV[3][1].fhandler);
 //			hwWrite32(0x1f801070, ~(1));
         }
     }
@@ -3782,11 +3783,13 @@ void biosInterrupt() {
         int i;
 
         for (i = 0; i < 3; i++) {
-            if (psxHu32(0x1070) & (1 << (i + 4))) {
+            if (Read_ISTAT() & (1 << (i + 4))) {
                 if (RcEV[i][1].status == EvStACTIVE) {
-                    softCall(RcEV[i][1].fhandler);
+                    assert(false);
+                    // FIXME: need to push the current rcnt on the stack.
+                    //softCallYield(SCRI_biosInterrupt_Rcnt, RcEV[i][1].fhandler);
                 }
-                psxHwWrite32(0x1f801070, ~(1 << (i + 4)));
+                Write_ISTAT(~(1 << (i + 4)));
             }
         }
     }
@@ -3798,7 +3801,7 @@ void psxBiosException() {
     switch (CP0_CAUSE & 0x3c) {
         case 0x00: // Interrupt
 
-            interrupt_r26 = psxRegs.CP0.n.EPC;
+            interrupt_r26 = CP0_EPC;
 
             SaveRegs();
             sp = psxMu32(0x6c80); // create new stack for interrupt handlers
@@ -3809,7 +3812,9 @@ void psxBiosException() {
                     u32 *queue = (u32 *)PSXM(SysIntRP[i]);
 
                     s0 = queue[2];
-                    softCall(queue[1]);
+                    // FIXME: need to push current queue on the stack.
+                    assert(false);
+                    //softCallYield(SCRI_biosException_Queue, queue[1]);
                 }
             }
 
@@ -3839,7 +3844,7 @@ void psxBiosException() {
             switch (a0) {
                 case 1: // EnterCritical - disable irq's
                     /* Fixes Medievil 2 not loading up new game, Digimon World not booting up and possibly others */
-                    v0 = (psxRegs.CP0.n.Status & 0x404) == 0x404;
+                    v0 = (CP0_STATUS & 0x404) == 0x404;
                     CP0_STATUS &= ~0x404; 
                     break;
 
