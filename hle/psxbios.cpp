@@ -24,6 +24,8 @@
 // TODO: implement all system calls, count the exact CPU cycles of system calls.
 
 #include "psxbios.h"
+#include "psxhle-filesystem.h"
+
 #include <zlib.h>
 
 #include <cstdint>
@@ -63,7 +65,7 @@
 
 #define HLE_ENABLE_FILEIO		(HLE_FULL && 0)       // fileio depends on HLE memcard ?
 #define HLE_ENABLE_PAD			(HLE_FULL && 0)
-#define HLE_ENABLE_LOADEXEC		(HLE_FULL && 0)       // depends on ISO9660 filesystem API
+#define HLE_ENABLE_LOADEXEC		(HLE_FULL && 1)       // depends on ISO9660 filesystem API
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL && 1)
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
@@ -109,27 +111,6 @@ using u8   = uint8_t;
 using s8   = int8_t;
 using uptr = uintptr_t;
 using sptr = intptr_t;
-
-struct EXE_HEADER {
-    unsigned char id[8];
-    u32 text;
-    u32 data;
-    u32 pc0;
-    u32 gp0;
-    u32 t_addr;
-    u32 t_size;
-    u32 d_addr;
-    u32 d_size;
-    u32 b_addr;
-    u32 b_size;
-    u32 s_addr;
-    u32 s_size;
-    u32 SavedSP;
-    u32 SavedFP;
-    u32 SavedGP;
-    u32 SavedRA;
-    u32 SavedS0;
-};
 
 #define SWAPu32(x) (x)
 #define SWAP32(x)  (x)
@@ -1696,7 +1677,7 @@ void psxBios_Load() { // 0x42
     PSXBIOS_LOG("psxBios_%s: %s, %x\n", biosA0n[0x42], Ra0, a1);
 
     void* pa1 = Ra1;
-    if (pa1 && LoadCdromFile(Ra0, &eheader) == 0) {
+    if (pa1 && psxFs_LoadFile(Ra0, eheader) == 0) {
         memcpy(pa1, ((char*)&eheader)+16, sizeof(EXEC));
         v0 = 1;
     } else v0 = 0;
