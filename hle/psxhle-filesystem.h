@@ -1,12 +1,22 @@
 #pragma once
 #include <cstdint>
 
+// Typical Playstation executable has a 76 byte header laid out as:
+//   [16 bytes]        [60 bytes]
+//   EXE_HEADER      EXEC_DESCRIPTOR
+//
+// The EXE_HEADER is only needed within the file itself. The descriptor is maintained separately within
+// the HLE BIOS implementation.
+
 struct EXE_HEADER {
     uint8_t  id[8];
     uint32_t text;
     uint32_t data;
-    uint32_t pc0;
-    uint32_t gp0;
+};
+
+struct EXEC_DESCRIPTOR {
+    uint32_t _pc;
+    uint32_t _gp;
     uint32_t t_addr;
     uint32_t t_size;
     uint32_t d_addr;

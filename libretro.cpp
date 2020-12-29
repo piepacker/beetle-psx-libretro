@@ -385,7 +385,7 @@ uint32_t PSX_GetRandU32(uint32_t mina, uint32_t maxa)
 }
 
 static std::vector<CDIF *> CDInterfaces;  // FIXME: Cleanup on error out.
-static std::vector<CDIF*> *cdifs = NULL;
+std::vector<CDIF*> *cdifs = NULL;
 static std::vector<const char *> cdifs_scex_ids;
 
 static bool eject_state;
@@ -1188,11 +1188,53 @@ uint32_t PSX_MemPeek32(uint32_t A)
 
 extern void psxBiosInit_StdLib();
 extern void psxBiosInitFull();
+extern void psxBiosLoadExecCdrom();
+
+static bool g_dbg_WasAttached = false;
+
+// returns 1 if OK to proceed execution.
+// returns 0 if waiting for debugger to attach.
+bool retro_debug_attach() {
+   bool hasMswDebugger = ::IsDebuggerPresent();
+   g_dbg_WasAttached = g_dbg_WasAttached || hasMswDebugger;        // track it, because if debugger detaches, the process may close itself...
+
+   static bool retro_attach_log = 0;
+   if (!hasMswDebugger) {
+      if (g_dbg_WasAttached) {
+         if (const char* env = getenv("RETRO_DETACH_KILL"); env && env[0] == '1') {
+            printf("\nTerminating process due to debugger detachment (RETRO_DETACH_KILL=1)\n");
+            exit(0);
+         }
+      }
+
+      if (const char* env = getenv("RETRO_ATTACH_WAIT"); env && env[0] == '1') {
+         if (!retro_attach_log) {
+            retro_attach_log = 1;
+            printf("\nWaiting for debugger attachment (RETRO_ATTACH_WAIT=1) ...\n");
+            printf("Process ID: %jd\n", (intmax_t)::GetCurrentProcessId());
+            fflush(nullptr);  
+         }
+         ::Sleep(100);
+         return 0;
+      }
+   }
+
+   if (retro_attach_log && hasMswDebugger) {
+      printf("** Debugger attached, execution resuming...\n");
+      fflush(nullptr);    
+   }
+   retro_attach_log = 0;
+   return 1;
+}
 
 // FIXME: Add PSX_Reset() and FrontIO::Reset() so that emulated input devices don't get power-reset on reset-button reset.
 static void PSX_Power(void)
 {
    unsigned i;
+
+   //printf("wtf????\n");
+   
+   while(!retro_debug_attach());
 
    PSX_PRNG.x = 123456789;
    PSX_PRNG.y = 987654321;
@@ -1228,6 +1270,7 @@ static void PSX_Power(void)
 
    psxBiosInit_StdLib();
    psxBiosInitFull();
+   psxBiosLoadExecCdrom();
 }
 
 template<typename T, bool Access24> static INLINE void MemPoke(pscpu_timestamp_t timestamp, uint32 A, T V)
@@ -1605,6 +1648,14 @@ static void SetDiscWrapper(const bool CD_TrayOpen) {
     }
 
     PSX_CDC->SetDisc(CD_TrayOpen, cdif, disc_id);
+}
+
+CDIF* GetCurrentCDIF() {
+    if (CD_IsPBP) {
+        return (*cdifs)[0];
+    } else {
+        return (*cdifs)[CD_SelectedDisc];
+    }
 }
 
 #ifdef HAVE_LIGHTREC
@@ -2268,7 +2319,7 @@ static int LoadCD(std::vector<CDIF *> *_CDInterfaces)
    InitCommon(_CDInterfaces);
 
    if (psx_skipbios == 1)
-   BIOSROM->WriteU32(0x6990, 0);
+       BIOSROM->WriteU32(0x6990, 0);
 
    MDFNGameInfo->GameType = GMT_CDROM;
 
@@ -4138,37 +4189,9 @@ void retro_unload_game(void)
 static uint64_t video_frames, audio_frames;
 #define SOUND_CHANNELS 2
 
-static bool g_dbg_WasAttached = false;
-
 void retro_run(void)
 {
-    bool hasMswDebugger = ::IsDebuggerPresent();
-    g_dbg_WasAttached = g_dbg_WasAttached || hasMswDebugger;        // track it, because if debugger detaches, the process may close itself...
-
-    static bool retro_attach_log = 0;
-    if (!hasMswDebugger) {
-        if (g_dbg_WasAttached) {
-            if (const char* env = getenv("RETRO_DETACH_KILL"); env && env[0] == '1') {
-                printf("\nTerminating process due to debugger detachment (RETRO_DETACH_KILL=1)\n");
-                exit(0);
-            }
-        }
-
-        if (const char* env = getenv("RETRO_ATTACH_WAIT"); env && env[0] == '1') {
-            if (!retro_attach_log) {
-                retro_attach_log = 1;
-                printf("\nWaiting for debugger attachment (RETRO_ATTACH_WAIT=1) ...\n");
-                fflush(nullptr);    
-            }
-            ::Sleep(100);
-            return;
-        }
-    }
-
-    if (retro_attach_log && hasMswDebugger) {
-        printf("** Debugger attached, execution resuming...\n");
-    }
-    retro_attach_log = 0;
+   if (!retro_debug_attach()) return;
 
    bool updated = false;
    //code to implement audio and video disable is not yet implemented

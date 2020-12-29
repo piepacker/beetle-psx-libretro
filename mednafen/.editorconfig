@@ -1,0 +1,6 @@
+# mednafen upstream has some very interesting notion of indentation.
+
+[*.{c,cpp,h,hpp}]
+indent_style = tab
+indent_size = 1
+tab_width = 8
