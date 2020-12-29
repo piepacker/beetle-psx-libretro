@@ -53,7 +53,7 @@ pscpu_timestamp_t PS_CPU::next_event_ts;
 uint32 PS_CPU::IPCache;
 uint32 PS_CPU::BIU;
 bool PS_CPU::Halted;
-struct PS_CPU::CP0 PS_CPU::CP0;
+struct PS_CPU::CP0_t PS_CPU::CP0;
 char PS_CPU::cache_buf[64 * 1024];
 
 #if 0
@@ -607,7 +607,9 @@ uint32 NO_INLINE PS_CPU::Exception(uint32 code, uint32 PC, const uint32 NP, cons
 {
  uint32 handler = 0x80000080;
 
+ fflush(nullptr);
  assert(code < 16);
+ assert(code == 0x8 || code == 0);
 
 #ifdef DEBUG
  if(code != EXCEPTION_INT && code != EXCEPTION_BP && code != EXCEPTION_SYSCALL)
@@ -763,7 +765,7 @@ extern bool HleDispatchCall(u32 pc);
    }
 
    instr = ReadInstruction(timestamp, PC);
-
+   printf("[INSN] %06X:%08X\n", PC & 0x1fff'ffff, instr);
 
    // 
    // Instruction decode
@@ -2689,6 +2691,10 @@ extern bool HleDispatchCall(u32 pc);
    }
 
    OpDone: ;
+   if (BDBT) {
+      printf("[BLOCK] %06X\n", new_PC & 0x1fffffff);
+      fflush(nullptr);
+   }
    PC = new_PC;
    new_PC = new_PC + 4;
    BDBT = 0;

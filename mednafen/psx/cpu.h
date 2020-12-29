@@ -159,7 +159,7 @@ class PS_CPU
   CP0REG_PRID = 15		// Product ID
  };
 
- static struct CP0
+ static struct CP0_t
  {
   union
   {

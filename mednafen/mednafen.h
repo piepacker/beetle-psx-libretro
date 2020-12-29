@@ -8,7 +8,9 @@
 #include "mednafen-types.h"
 
 #ifdef _WIN32
+#if !defined(strcasecmp)
 #define strcasecmp _stricmp
+#endif
 #endif
 
 void MDFND_DispMessage(
