@@ -213,6 +213,10 @@ static INLINE uint16_t GetTexel(PS_GPU *g, int32_t u_arg, int32_t v_arg)
      uint32_t u_ext = ((u_arg & g->SUCV.TWX_AND) + g->SUCV.TWX_ADD);
      uint32_t fbtex_x = ((u_ext >> (2 - TexMode_TA))) & 1023;
      uint32_t fbtex_y = (v_arg & g->SUCV.TWY_AND) + g->SUCV.TWY_ADD;
+     // The emulation of the PS1 texture cache is very nice but it isn't free. The number of game that relies on
+     // this cache for accurate rendering is likely close of 0 (if not 0)
+     // If such game exist, an option could be added to slow down this game only
+#if 0
      uint32_t gro = fbtex_y * 1024U + fbtex_x;
 
      PS_GPU::TexCache_t *TexCache = &g->TexCache[0];
@@ -244,6 +248,9 @@ static INLINE uint16_t GetTexel(PS_GPU *g, int32_t u_arg, int32_t v_arg)
      }
 
      uint16 fbw = c->Data[gro & 0x3];
+#else
+     uint16 fbw = texel_fetch(g, fbtex_x, fbtex_y);
+#endif
 
      if(TexMode_TA != 2)
      {
