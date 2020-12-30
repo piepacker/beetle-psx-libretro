@@ -2214,17 +2214,48 @@ void GPU_PokeRAM(uint32 A, uint16 V)
 /* Set a pixel in VRAM, upscaling it if necessary */
 void texel_put(uint32 x, uint32 y, uint16 v)
 {
-   uint32_t dy, dx;
-   x <<= GPU.upscale_shift;
-   y <<= GPU.upscale_shift;
+	/* Duplicate the pixel as many times as necessary (nearest
+	 * neighbour upscaling) */
+	switch (GPU.upscale_shift) {
+		case 0: {
+					vram_put(&GPU, x, y, v);
+					break;
+				}
+		case 1: {
+					x <<= 1;
+					y <<= 1;
+					uint32* vram = (uint32*)&GPU.vram[((y) << (10 + 1)) | (x)];
+					uint32 vv = ((uint32)v << 16) | v;
+					vram[0] = vv;
+					vram[1 << 10] = vv;
+					break;
+				}
+		case 2: {
+					x <<= 2;
+					y <<= 2;
+					uint64* vram = (uint64*)&GPU.vram[((y) << (10 + 2)) | (x)];
+					uint32 vv = ((uint32)v << 16) | v;
+					uint64 vvvv = ((uint64)vv << 32) | vv;
+					vram[0] = vvvv;
+					vram[1 << 10] = vvvv;
+					vram[2 << 10] = vvvv;
+					vram[3 << 10] = vvvv;
+					break;
+				}
+		default: {
+					 x <<= GPU.upscale_shift;
+					 y <<= GPU.upscale_shift;
 
-   /* Duplicate the pixel as many times as necessary (nearest
-    * neighbour upscaling) */
-   for (dy = 0; dy < UPSCALE(&GPU); dy++)
-   {
-      for (dx = 0; dx < UPSCALE(&GPU); dx++)
-         vram_put(&GPU, x + dx, y + dy, v);
-   }
+					 uint32_t dy, dx;
+
+					 for (dy = 0; dy < UPSCALE(&GPU); dy++)
+					 {
+						 for (dx = 0; dx < UPSCALE(&GPU); dx++)
+							 vram_put(&GPU, x + dx, y + dy, v);
+					 }
+					 break;
+				 }
+	}
 }
 
 int32_t GPU_GetScanlineNum(void)
