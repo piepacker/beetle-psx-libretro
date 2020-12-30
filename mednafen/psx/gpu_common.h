@@ -2,12 +2,14 @@ extern enum dither_mode psx_gpu_dither_mode;
 
 /* Return a pixel from VRAM */
 #define vram_fetch(gpu, x, y)  ((gpu)->vram[((y) << (10 + (gpu)->upscale_shift)) | (x)])
+#define vram_fetch_pos(gpu, yx)  ((gpu)->vram[yx])
 
 /* Return a pixel from VRAM, ignoring the internal upscaling */
 #define texel_fetch(gpu, x, y) vram_fetch((gpu), (x) << (gpu)->upscale_shift, (y) << (gpu)->upscale_shift)
 
 /* Set a pixel in VRAM */
 #define vram_put(gpu, x, y, v) (gpu)->vram[((y) << (10 + (gpu)->upscale_shift)) | (x)] = (v)
+#define vram_put_pos(gpu, yx, v) (gpu)->vram[yx] = (v)
 
 #define DitherEnabled(gpu)    (psx_gpu_dither_mode != DITHER_OFF && (gpu)->dtd)
 
@@ -66,6 +68,26 @@ static INLINE void PlotPixelBlend(uint16_t bg_pix, uint16_t *fore_pix)
          break;
    }
 
+}
+
+// Copy of PlotPixel but y math was moved outside of the scanline loop
+template<int BlendMode, bool MaskEval_TA, bool textured>
+static INLINE void PlotPixelFast(PS_GPU *gpu, int32_t yx, uint16_t fore_pix)
+{
+   if(BlendMode >= 0 && (fore_pix & 0x8000))
+   {
+      // Don't use bg_pix for mask evaluation, it's modified in blending code paths.
+      uint16_t bg_pix = vram_fetch_pos(gpu, yx);
+      PlotPixelBlend<BlendMode>(bg_pix, &fore_pix);
+   }
+
+   if(!MaskEval_TA || !(vram_fetch_pos(gpu, yx) & 0x8000))
+   {
+      if (textured)
+         vram_put_pos(gpu, yx, fore_pix | gpu->MaskSetOR);
+      else
+         vram_put_pos(gpu, yx, (fore_pix & 0x7FFF) | gpu->MaskSetOR);
+   }
 }
 
 template<int BlendMode, bool MaskEval_TA, bool textured>

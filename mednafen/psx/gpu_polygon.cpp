@@ -162,13 +162,19 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
         gpu->DrawTimeAvail -= w >> gpu->upscale_shift;
   }
 
+  // y is constant so let's do all 'y' math outside of the x loop
+  uint32 dither_y = dither ? ((y >> gpu->dither_upscale_shift) & 3) : 2;
+  // More Y precision bits than GPU RAM installed in (non-arcade, at least) Playstation hardware.
+  y &= (512 << gpu->upscale_shift) - 1;
+  int yx_pos = (y << (10 + gpu->upscale_shift)) | x;
+
   do
   {
    const uint32 r = ig.r >> (COORD_FBS + COORD_POST_PADDING);
    const uint32 g = ig.g >> (COORD_FBS + COORD_POST_PADDING);
    const uint32 b = ig.b >> (COORD_FBS + COORD_POST_PADDING);
-   uint32 dither_x = (x >> gpu->dither_upscale_shift) & 3;
-   uint32 dither_y = (y >> gpu->dither_upscale_shift) & 3;
+   // x is located on lsb of yx_pos
+   uint32 dither_x = dither ? ((yx_pos >> gpu->dither_upscale_shift) & 3) : 3;
 
    //assert(x >= ClipX0 && x <= ClipX1);
 
@@ -180,24 +186,17 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
     {
      if(TexMult)
      {
-
-      if(!DitherEnabled(gpu))
-      {
-       dither_x = 3;
-       dither_y = 2;
-      }
-
       uint8_t *dither_offset = gpu->DitherLUT[dither_y][dither_x];
       fbw = ModTexel(dither_offset, fbw, r, g, b);
      }
-     PlotPixel<BlendMode, MaskEval_TA, true>(gpu, x, y, fbw);
+     PlotPixelFast<BlendMode, MaskEval_TA, true>(gpu, yx_pos, fbw);
     }
    }
    else
    {
     uint16 pix = 0x8000;
 
-    if(goraud && DitherEnabled(gpu))
+    if(goraud && dither)
     {
      pix |= gpu->DitherLUT[dither_y][dither_x][r] << 0;
      pix |= gpu->DitherLUT[dither_y][dither_x][g] << 5;
@@ -210,10 +209,10 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
      pix |= (b >> 3) << 10;
     }
 
-    PlotPixel<BlendMode, MaskEval_TA, false>(gpu, x, y, pix);
+    PlotPixelFast<BlendMode, MaskEval_TA, false>(gpu, yx_pos, pix);
    }
 
-   x++;
+   yx_pos++;
    AddIDeltas_DX<goraud, textured>(ig, idl);
   } while(MDFN_LIKELY(--w > 0));
 }
