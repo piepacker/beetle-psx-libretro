@@ -33,6 +33,11 @@
 #include "gpu_sprite.cpp"
 #include "gpu_line.cpp"
 
+#if defined(__SSE2__)
+#include <xmmintrin.h>
+#include <emmintrin.h>
+#endif
+
 /*
    GPU display timing master clock is nominally 53.693182 MHz for NTSC PlayStations, and 53.203425 MHz for PAL PlayStations.
 
@@ -92,6 +97,12 @@ struct CTEntry
 };
 
 PS_GPU GPU;
+
+#if defined(__SSE2__)
+static __m128i s_sse_mask_r;
+static __m128i s_sse_mask_g;
+static __m128i s_sse_mask_b;
+#endif
 
 /* Buffers used to hold data during upscale operations */
 uint32 TexCache_Tag[256];
@@ -691,6 +702,12 @@ void GPU_Init(bool pal_clock_and_tv,
    GPU.dither_upscale_shift = 0;
 
    GPU.killQuadPart = 0;
+
+#if defined(__SSE2__)
+   s_sse_mask_r = _mm_set1_epi32(0x001f);
+   s_sse_mask_g = _mm_set1_epi32(0x03e0);
+   s_sse_mask_b = _mm_set1_epi32(0x7c00);
+#endif
 }
 
 void GPU_RecalcClockRatio(void) {
@@ -1394,17 +1411,89 @@ static INLINE void ReorderRGB_Var(uint32_t out_Rshift,
    }           // 15bpp
    else
    {
-      for(int32 x = dx_start; x < dx_end; x++)
-      {
-         uint32_t srcpix = src[(fb_x >> 1)];
-         dest[x] = MAKECOLOR(
-               (((srcpix >> 0) & 0x1F) << 3),
-               (((srcpix >> 5) & 0x1F) << 3),
-               (((srcpix >> 10) & 0x1F) << 3),
-               0);
+	   int32 fb_x_final = fb_x + (dx_end - dx_start) * 2;
+	   if (fb_x_final >= fb_mask) {
+		   // Need to handle src wrapping
+		   for(int32 x = dx_start; x < dx_end; x++)
+		   {
+			   uint32_t srcpix = src[(fb_x >> 1)];
+			   dest[x] = MAKECOLOR(
+					   (((srcpix >> 0) & 0x1F) << 3),
+					   (((srcpix >> 5) & 0x1F) << 3),
+					   (((srcpix >> 10) & 0x1F) << 3),
+					   0);
 
-         fb_x = (fb_x + 2) & fb_mask;
-      }
+			   fb_x = (fb_x + 2) & fb_mask;
+		   }
+	   } else {
+		   // Otherwise we can save the mask and do a basic increment
+#if defined(__SSE2__)
+		   fb_x >>= 1;
+		   int32 x = dx_start;
+
+		   __m128i* sse_src = (__m128i*)(src + fb_x);
+		   __m128i* sse_dst = (__m128i*)(dest + x);
+		   const int PIXELS_SHIFT = 3; // process 2^3 pixels every loop
+		   int32 i_end = (dx_end - x) >> PIXELS_SHIFT;
+		   x += (i_end << PIXELS_SHIFT);
+		   fb_x += (i_end << PIXELS_SHIFT);
+
+		   for(int32 i = 0; i < i_end; i++)
+		   {
+			   auto to_rgba8 = [](__m128i rgb5a1) {
+				   const int red_shift = RED_SHIFT + 3;
+				   const int green_shift = GREEN_SHIFT + 3 - 5;
+				   const int blue_shift = BLUE_SHIFT + 3 - 10; // value is negative, so right shift
+				   __m128i tmp;
+				   __m128i out;
+
+				   out = _mm_xor_si128(out, out);
+				   tmp = _mm_slli_epi32(_mm_and_si128(rgb5a1, s_sse_mask_r), red_shift);
+				   out = _mm_or_si128(out, tmp);
+				   tmp = _mm_slli_epi32(_mm_and_si128(rgb5a1, s_sse_mask_g), green_shift);
+				   out = _mm_or_si128(out, tmp);
+				   tmp = _mm_srli_epi32(_mm_and_si128(rgb5a1, s_sse_mask_b), -blue_shift);
+				   out = _mm_or_si128(out, tmp);
+
+				   return out;
+			   };
+
+			   __m128i in = _mm_loadu_si128(sse_src);
+			   sse_src++;
+
+			   _mm_storeu_si128(sse_dst, to_rgba8(_mm_unpacklo_epi16(in, in)));
+			   sse_dst++;
+
+			   _mm_storeu_si128(sse_dst, to_rgba8(_mm_unpackhi_epi16(in, in)));
+			   sse_dst++;
+		   }
+
+		   for(; x < dx_end;)
+		   {
+			   uint32_t srcpix = src[fb_x];
+			   dest[x] = MAKECOLOR(
+					   (((srcpix >> 0) & 0x1F) << 3),
+					   (((srcpix >> 5) & 0x1F) << 3),
+					   (((srcpix >> 10) & 0x1F) << 3),
+					   0);
+
+			   fb_x++;
+			   x++;
+		   }
+#else
+		   for(int32 x = dx_start; x < dx_end; x++)
+		   {
+			   uint32_t srcpix = src[fb_x];
+			   dest[x] = MAKECOLOR(
+					   (((srcpix >> 0) & 0x1F) << 3),
+					   (((srcpix >> 5) & 0x1F) << 3),
+					   (((srcpix >> 10) & 0x1F) << 3),
+					   0);
+
+			   fb_x++;
+		   }
+#endif
+	   }
    }
 }
 
