@@ -115,7 +115,7 @@ static INLINE void AddIDeltas_DY(i_group &ig, const i_deltas &idl, uint32_t coun
    }
 }
 
-template<bool goraud, bool textured, int BlendMode, bool TexMult, uint32 TexMode_TA, bool MaskEval_TA>
+template<bool goraud, bool textured, int BlendMode, bool TexMult, uint32 TexMode_TA, bool MaskEval_TA, bool dither>
 static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32 x_bound, i_group ig, const i_deltas &idl)
 {
    if(LineSkipTest(gpu, y >> gpu->upscale_shift))
@@ -129,8 +129,6 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
   int32 w = x_bound - x_start;
   //int32 x = x_start;
   int32 x = sign_x_to_s32(11 + gpu->upscale_shift, x_start);
-
-  bool dither      = DitherEnabled(gpu);
 
   if(x < clipx0)
   {
@@ -217,7 +215,7 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
   } while(MDFN_LIKELY(--w > 0));
 }
 
-template<bool goraud, bool textured, int BlendMode, bool TexMult, uint32_t TexMode_TA, bool MaskEval_TA>
+template<bool goraud, bool textured, int BlendMode, bool TexMult, uint32_t TexMode_TA, bool MaskEval_TA, bool dither>
 static INLINE void DrawTriangle(PS_GPU *gpu, tri_vertex *vertices)
 {
    i_deltas idl;
@@ -451,7 +449,7 @@ if(vertices[1].y == vertices[0].y)
      continue;
     }
 
-    DrawSpan<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA>(gpu, yi, GetPolyXFP_Int(lc), GetPolyXFP_Int(rc), ig, idl);
+    DrawSpan<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA, dither>(gpu, yi, GetPolyXFP_Int(lc), GetPolyXFP_Int(rc), ig, idl);
    }
   }
   else
@@ -469,7 +467,7 @@ if(vertices[1].y == vertices[0].y)
      goto skipit;
     }
 
-    DrawSpan<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA>(gpu, yi, GetPolyXFP_Int(lc), GetPolyXFP_Int(rc), ig, idl);
+    DrawSpan<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA, dither>(gpu, yi, GetPolyXFP_Int(lc), GetPolyXFP_Int(rc), ig, idl);
     //
     //
     //
@@ -882,8 +880,12 @@ static void Command_DrawPolygon(PS_GPU *gpu, const uint32_t *cb)
          }
       }
 
-		if (rsx_intf_has_software_renderer())
-			DrawTriangle<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA>(gpu, vertices);
+		if (rsx_intf_has_software_renderer()) {
+			if (DitherEnabled(gpu))
+				DrawTriangle<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA, true>(gpu, vertices);
+			else
+				DrawTriangle<goraud, textured, BlendMode, TexMult, TexMode_TA, MaskEval_TA, false>(gpu, vertices);
+		}
 
 		// Line Render: Overwrite vertices with those of the second triangle
 		if ((lineFound) && (numvertices == 3) && (textured))
