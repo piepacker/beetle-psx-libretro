@@ -37,14 +37,26 @@
 
 #include "mednafen/psx/dis.h"
 
+
+static bool s_suppress_spam = 0;
+static std::map<std::string, int> s_repeat_supress;
+
+static bool is_suppressed(const char* check) {
+    return s_suppress_spam && (++s_repeat_supress[check] > 2);
+};
+
 #if !defined(PSXBIOS_LOG)
-#   define PSXBIOS_LOG(...) (printf(__VA_ARGS__), fflush(nullptr))
+#   define PSXBIOS_LOG(...) (printf("[HLEBIOS] " __VA_ARGS__), fflush(nullptr))
 //#   define PSXBIOS_LOG(...) (void(0))
 #endif
 
-#if !defined(CPU_LOG)
-#   define PSXBIOS_LOG(...) (printf(__VA_ARGS__), fflush(nullptr))
-//#   define PSXBIOS_LOG(...) (void(0))
+// new psxbios with signature matching PSXBIOS_LOG_SPAM.
+#if !defined(PSXBIOS_LOG_NEW)
+#   define PSXBIOS_LOG_NEW(func, ...) (printf("[HLEBIOS] " func " " __VA_ARGS__), fflush(nullptr))
+#endif
+
+#if !defined(PSXBIOS_LOG_SPAM)
+#   define PSXBIOS_LOG_SPAM(func, ...) ( !is_suppressed(func) && (printf("[HLEBIOS] " func " " __VA_ARGS__), fflush(nullptr), 1))
 #endif
 
 #define HLE_FULL                1       // enables full ROM-less HLE support
@@ -69,9 +81,13 @@
 #define HLE_ENABLE_EVENT        (HLE_FULL || 1)
 #define HLE_ENABLE_LOADEXEC		(HLE_FULL || 1)       // depends on ISO9660 filesystem API
 
-#define HLE_ENABLE_FILEIO		(HLE_FULL && 0)       // fileio depends on HLE memcard ?
+#define HLE_ENABLE_FILEIO		(HLE_FULL && 1)       // fileio depends on HLE memcard ?
 #define HLE_ENABLE_PAD			(HLE_FULL && 1)
 #define HLE_ENABLE_ENTRYINT     (HLE_FULL && 1)
+
+#define HLE_ENABLE_FINDFILE     (HLE_FULL && 0)
+#define HLE_ENABLE_FORMAT       (HLE_FULL && 0)
+
 
 // qsort needs to be rewritten before it can be enabled. And once rewritten, probably can remove
 // the conditional build for it.. no good reason to disable it except right now it doesn't build --jstine
@@ -483,7 +499,7 @@ typedef struct {
 } FileDesc;
 
 #if HLE_ENABLE_ENTRYINT
-static u32 *jmp_int = NULL;
+static u32 jmp_int = 0;     // mips address
 static u32 SysIntRP[8];
 #endif
 
@@ -1521,21 +1537,25 @@ static void raw_puts(const char* cstr) {
 }
 
 void psxBios_getchar() { //0x3b
+    PSXBIOS_LOG_SPAM("getchar");
     v0 = getchar();
     pc0 = ra;
 }
 
 void psxBios_putchar() { // 3d
+    PSXBIOS_LOG_SPAM("putchar");
     raw_putc(a0);
     pc0 = ra;
 }
 
 void psxBios_puts() { // 3e/3f
+    PSXBIOS_LOG_SPAM("puts");
     raw_puts(Ra0);
     pc0 = ra;
 }
 
 void psxBios_printf() { // 0x3f
+    PSXBIOS_LOG_NEW("printf");
     const int t2len = 64;
     char tmp2[t2len];
     char ptmp[512];      // FIXME: remove this and replace with StringUtila nd format directly into std string.
@@ -1637,6 +1657,7 @@ _start:
 
 #if 0
 void psxBios_format() { // 0x41
+    PSXBIOS_LOG_NEW("format");
     if (strcmp(Ra0, "bu00:") == 0 && Config.Mcd1[0] != '\0')
     {
         CreateMcd(Config.Mcd1);
@@ -2203,6 +2224,8 @@ void psxBios_TestEvent() { // 0b
     ev   = a0 & 0xff;
     spec = (a0 >> 8) & 0xff;
 
+    PSXBIOS_LOG_SPAM("TestEvent");
+
     assert(spec < 32);
 
     if (EventCB[ev][spec].status == EvStALREADY) {
@@ -2394,43 +2417,52 @@ void psxBios_ChangeClearPad() { // 5b
 
 #if HLE_ENABLE_ENTRYINT
 static unsigned interrupt_r26 = 0x8004E8B0;
+static bool s_saved = 0;
 
 static inline void SaveRegs() {
+    assert(!s_saved);
+    s_saved = 1;
     memcpy(regs, PSX_CPU->GPR, sizeof(PSX_CPU->GPR));
     regs[33] = lo;
     regs[34] = hi;
     regs[35] = pc0;
+
+    interrupt_r26 = CP0_EPC;
 }
 
 static inline void LoadRegs() {
+    assert(s_saved);
+    s_saved = 0;
     memcpy(PSX_CPU->GPR, regs, sizeof(PSX_CPU->GPR));
     lo = regs[33];
     hi = regs[34];
 }
 
 void psxBios_ReturnFromException() { // 17
+    PSXBIOS_LOG_SPAM("ReturnFromException", "DSlot=%d EPC=%08x\n", ((CP0_CAUSE >> 31) & 1), CP0_EPC);
+
     LoadRegs();
 
     pc0 = CP0_EPC;
     k0 = interrupt_r26;
 
-    if (CP0_CAUSE & 0x80000000) pc0 += 4;
-
     CP0_STATUS = (CP0_STATUS & 0xfffffff0) |
                 ((CP0_STATUS & 0x3c) >> 2);
+
+    PSX_CPU->RecalcIPCache();
 }
 
 void psxBios_ResetEntryInt() { // 18
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x18]);
 
-    jmp_int = NULL;
+    jmp_int = 0;
     pc0 = ra;
 }
 
 void psxBios_HookEntryInt() { // 19
     PSXBIOS_LOG("psxBios_%s\n", biosB0n[0x19]);
 
-    jmp_int = (u32*)Ra0;
+    jmp_int = a0; //(u32*)Ra0;
     pc0 = ra;
 }
 #endif
@@ -2454,6 +2486,7 @@ void psxBios_UnDeliverEvent() { // 0x20
 #endif
 
 #if HLE_ENABLE_FILEIO
+#if 0
 #define buread(Ra1, mcd, length) { \
     SysPrintf("read %d: %x,%x (%s)\n", FDesc[1 + mcd].mcfile, FDesc[1 + mcd].offset, a2, Mcd##mcd##Data + 128 * FDesc[1 + mcd].mcfile + 0xa); \
     ptr = Mcd##mcd##Data + 8192 * FDesc[1 + mcd].mcfile + FDesc[1 + mcd].offset; \
@@ -2479,12 +2512,18 @@ void psxBios_UnDeliverEvent() { // 0x20
     v0 = 0; } \
     else v0 = length; \
 }
+#else
+#define buread(Ra1, mcd, length)   (assert(false))
+#define buwrite(Ra1, mcd, length)  (assert(false))
+#endif
 
 char ffile[64], *pfile;
 int nfile;
 
-static void buopen(int mcd, char *ptr, char *cfg)
+static void buopen(int mcd)
 {
+    assert(false);
+#if 0
     int i;
     char *mcd_data = ptr;
 
@@ -2539,11 +2578,13 @@ static void buopen(int mcd, char *ptr, char *cfg)
             SysPrintf("openC %s %d\n", ptr, nblk);
             v0 = 1 + mcd;
             /* just go ahead and resave them all */
+            VmcWriteNV(
             SaveMcd(cfg, ptr, 128, 128 * 15);
             break;
         }
         /* shouldn't this return ENOSPC if i == 16? */
     }
+#endif
 }
 
 /* Internally redirects to "FileRead(fd,tempbuf,1)".*/
@@ -2614,11 +2655,11 @@ void psxBios_open() { // 0x32
 
     if (pa0) {
         if (!strncmp(pa0, "bu00", 4)) {
-            buopen(1, Mcd1Data, Config.Mcd1);
+            buopen(1); //Mcd1Data, Config.Mcd1);
         }
 
         if (!strncmp(pa0, "bu10", 4)) {
-            buopen(2, Mcd2Data, Config.Mcd2);
+            buopen(2); // Mcd2Data, Config.Mcd2);
         }
     }
 
@@ -2677,7 +2718,7 @@ void psxBios_read() { // 0x34
 
 void psxBios_write() { // 0x35/0x03
     char *ptr;
-    void *pa1 = Ra1;
+    auto *pa1 = Ra1;
 
     PSXBIOS_LOG("psxBios_%s: %x,%x,%x\n", biosB0n[0x35], a0, a1, a2);
 
@@ -2743,13 +2784,16 @@ static void bufile(const u8* mcdraw) {
         if (pfile[0] == 0) {
             strncpy(dir->name, (char*)ptr, sizeof(dir->name) - 1);
             if (size_of_name < sizeof(dir->name)) dir->name[size_of_name] = '\0';
-        } else for (i=0; i<20; i++) {
+        } else for (int i=0; i<20; i++) {
             if (pfile[i] == ptr[i]) {
-                                dir->name[i] = ptr[i]; continue; }
+                dir->name[i] = ptr[i]; continue;
+            }
             if (pfile[i] == '?') {
-                dir->name[i] = ptr[i]; continue; }
+                dir->name[i] = ptr[i]; continue;
+            }
             if (pfile[i] == '*') {
-                strcpy(dir->name+i, ptr+i); break; }
+                strcpy(dir->name+i, (char*)ptr+i); break;
+            }
             match = 0; break;
         }
         SysPrintf("%d : %s = %s + %s (match=%d)\n", nfile, dir->name, pfile, ptr, match);
@@ -2760,12 +2804,13 @@ static void bufile(const u8* mcdraw) {
     }
 }
 
+#if HLE_ENABLE_FINDFILE
 /*
  *	struct DIRENTRY* firstfile(char *name,struct DIRENTRY *dir);
  */
  
 void psxBios_firstfile() { // 42
-    void *pa0 = Ra0;
+    auto *pa0 = Ra0;
     char *ptr;
     int i;
 
@@ -2901,7 +2946,8 @@ void psxBios_delete() { // 45
 
     pc0 = ra;
 }
-#endif
+#endif // HLE_ENABLE_FINDFILE
+#endif // HLE_ENABLE_FILEIO
 
 
 #if HLE_ENABLE_MCD
@@ -3486,15 +3532,21 @@ void psxBiosInitFull() {
     biosB0[0x3c] = psxBios_getchar;
     //biosB0[0x3e] = psxBios_gets;
     //biosB0[0x40] = psxBios_cd;
-    biosB0[0x41] = psxBios_format;
-    biosB0[0x42] = psxBios_firstfile;
-    biosB0[0x43] = psxBios_nextfile;
-    biosB0[0x44] = psxBios_rename;
-    biosB0[0x45] = psxBios_delete;
     //biosB0[0x46] = psxBios_undelete;
     //biosB0[0x47] = psxBios_AddDevice;
     //biosB0[0x48] = psxBios_RemoteDevice;
     //biosB0[0x49] = psxBios_PrintInstalledDevices;
+#endif
+
+#if HLE_ENABLE_FINDFILE
+    biosB0[0x42] = psxBios_firstfile;
+    biosB0[0x43] = psxBios_nextfile;
+    biosB0[0x44] = psxBios_rename;
+    biosB0[0x45] = psxBios_delete;
+#endif
+
+#if HLE_ENABLE_FORMAT
+    biosB0[0x41] = psxBios_format;
 #endif
 
 #if HLE_ENABLE_MCD
@@ -3588,7 +3640,7 @@ void psxBiosInitFull() {
 
 #if HLE_ENABLE_ENTRYINT
     memset(SysIntRP, 0, sizeof(SysIntRP));
-    jmp_int = NULL;
+    jmp_int = 0;
 #endif
 
 #if HLE_ENABLE_PAD
@@ -3814,7 +3866,7 @@ void psxBiosLoadExecCdrom() {
     if (post_colon_ptr) {
         int colon_pos = (post_colon_ptr - exedata);
         if (!colon_pos) {
-            PSXBIOS_LOG("[WARN]: Suspicious looking BOOT = %s", exedata);
+            PSXBIOS_LOG("Suspicious looking BOOT = %s", exedata);
             mount = mnt_cdrom;
         }
     }
@@ -3953,15 +4005,14 @@ void biosInterrupt() {
     }
 
     if (istat & 0x70) { // Rcnt 0,1,2
-        int i;
-
-        for (i = 0; i < 3; i++) {
+        for (int i = 0; i < 3; i++) {
             if (Read_ISTAT() & (1 << (i + 4))) {
                 if (RcEV[i][1].status == EvStACTIVE) {
                     assert(false);
                     // FIXME: need to push the current rcnt on the stack.
                     //softCallYield(SCRI_biosInterrupt_Rcnt, RcEV[i][1].fhandler);
                 }
+                PSXBIOS_LOG("Clear ISTAT for RCNT %d", i);
                 Write_ISTAT(~(1 << (i + 4)));
             }
         }
@@ -3986,9 +4037,6 @@ void psxBiosException80() {
     auto excode = (CP0_CAUSE & 0x3c) >> 2;
     switch (excode) {
         case 0x00: // Interrupt
-
-            interrupt_r26 = CP0_EPC;
-
             SaveRegs();
             sp = psxMu32(0x6c80); // create new stack for interrupt handlers
             biosInterrupt();
@@ -4004,21 +4052,21 @@ void psxBiosException80() {
                 }
             }
 
-            if (jmp_int != NULL) {
-                int i;
-
+            if (jmp_int) {
+                uint32_t* jmpptr = (uint32_t*)PSXM(jmp_int);
+                PSXBIOS_LOG("jmp_int @ %08x - ra=%08x sp=%08x fp=%08x\n", jmp_int, jmpptr[0], jmpptr[1], jmpptr[2]);
                 Write_ISTAT(0xffffffff);
 
-                ra = jmp_int[0];
-                sp = jmp_int[1];
-                fp = jmp_int[2];
-                for (i = 0; i < 8; i++) // s0-s7
-                     GPR_ARRAY[16 + i] = jmp_int[3 + i];
-                gp = jmp_int[11];
+                ra = jmpptr[0];
+                sp = jmpptr[1];
+                fp = jmpptr[2];
+                for (int i = 0; i < 8; i++) // s0-s7
+                     GPR_ARRAY[16 + i] = jmpptr[3 + i];
+                gp = jmpptr[11];
 
                 v0 = 1;
                 pc0 = ra;
-                return;
+                return; 
             }
             Write_ISTAT(0);
             break;
@@ -4044,7 +4092,7 @@ void psxBiosException80() {
 
             CP0_STATUS = (CP0_STATUS & 0xfffffff0) |
                         ((CP0_STATUS & 0x3c) >> 2);
-            return;
+        return;
 
         case 0xa:  // Reserved instruction exception
             assert(false);
@@ -4067,30 +4115,30 @@ void psxBiosException80() {
 }
 #endif
 
-std::map<std::string, int> s_repeat_supress;
-
 bool psxbios_invoke_any(const HLE_BIOS_TABLE& table, const char * const names[256]) {
     int call = t1 & 0xff;
 
 
-    if (const char* name = names[call]) {
-        // filter out some very spammy calls.
-        auto is_suppressed = [name](const char* check) {
-            if (strcmp(name, check)) return false;
-            return ++s_repeat_supress[check] > 2;
-        };
-
-        if ((!is_suppressed("putchar"               ))
-        &&  (!is_suppressed("strlen"                ))
-        &&  (!is_suppressed("ReturnFromExecption"   ))
-        &&  (!is_suppressed("TestEvent"             ))
-        ){
-            PSXBIOS_LOG("PSX_BIOS: %s\n", names[call]);
-        }
-    }
     if (table[call]) {
         table[call]();
         return 1;
+    }
+    else {
+        if (const char* name = names[call]) {
+            auto my_suppress = [name](const char* check) {
+                if (strcmp(name, check)) return false;
+                return is_suppressed(check);
+            };
+            // filter out some very spammy calls.
+            if (!s_suppress_spam ||
+                   ((!my_suppress("putchar"               ))
+                &&  (!my_suppress("strlen"                ))
+                &&  (!my_suppress("ReturnFromExecption"   ))
+                &&  (!my_suppress("TestEvent"             ))
+            )){
+                PSXBIOS_LOG("callfunc %s\n", names[call]);
+            }
+        }
     }
 
     if (is_hle_full_mode) {
@@ -4103,8 +4151,44 @@ bool psxbios_invoke_A0() { return psxbios_invoke_any(biosA0, biosA0n); }
 bool psxbios_invoke_B0() { return psxbios_invoke_any(biosB0, biosB0n); }
 bool psxbios_invoke_C0() { return psxbios_invoke_any(biosC0, biosC0n); }
 
-bool HleDispatchCall(u32 pc) {
+// this hack is needed due to mednafen's very terrible way of implementing Load DelaySlot (LDS).
+// I have to know whether or not the instruction will invoke the HLE before I can know to flush the LDS.
+// And since the LDS is local scope to the interpreter -- which would be a good idea for performance if the
+// interpreter weren't so badly authored that it's hopelessly slow anyway -- the only way to flush the LDS
+// prior to invoking a hook is by verifying the hook first, clearing the interpreter local LDS state, and 
+// then calling the hook separately.
 
+bool HleTestCall(u32 pc) {
+    if (IsHlePC(pc)) return 1;
+
+    // kind of cheating here, don't care if we actually call into bios or not.
+    // it's totally not important to maintain LDS state across exceptions or JLEs.
+
+    auto masked_pc = pc & 0x1fff'ffff;
+    if (masked_pc == 0x1FC00180) {
+        return 1;
+    }
+
+    if (masked_pc == 0x80) {
+        return 1;
+    }
+
+    if(masked_pc == 0xA0) {
+        return 1;
+    }
+
+    if(masked_pc == 0xB0) {
+        return 1;
+    }
+
+    if(masked_pc == 0xC0) {
+        return 1;
+    }
+
+    return 0;
+}
+
+bool HleDispatchCall(u32 pc) {
 
     if (IsHlePC(pc)) {
         auto id = HleGetCallId(pc);
