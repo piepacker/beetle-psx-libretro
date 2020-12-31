@@ -332,6 +332,7 @@ MDFNGI *MDFNGameInfo = NULL;
 #if PSX_DBGPRINT_ENABLE
 static unsigned psx_dbg_level = 0;
 
+#if !defined(PSX_DBG)
 void PSX_DBG(unsigned level, const char *format, ...)
 {
    if(psx_dbg_level >= level)
@@ -342,6 +343,8 @@ void PSX_DBG(unsigned level, const char *format, ...)
       va_end(ap);
    }
 }
+#endif
+
 #else
 static unsigned const psx_dbg_level = 0;
 #endif
