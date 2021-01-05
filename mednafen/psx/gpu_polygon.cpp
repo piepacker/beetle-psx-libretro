@@ -2,23 +2,39 @@
 #include <algorithm>
 #include "beetle_psx_globals.h"
 
+#if defined(__SSE2__)
+#include <xmmintrin.h>
+#include <emmintrin.h>
+#endif
+
 #define COORD_FBS 12
 #define COORD_MF_INT(n) ((n) << COORD_FBS)
 #define COORD_POST_PADDING 12
 
-struct i_group
+struct alignas(16) i_group
 {
-   uint32_t u, v;
-   uint32_t r, g, b;
+   uint32_t u, v, s, t;
+   union {
+       struct {
+           uint32_t r, g, b, a;
+       };
+       __m128i rgba;
+   };
 };
 
-struct i_deltas
+struct alignas(16) i_deltas
 {
-   uint32_t du_dx, dv_dx;
-   uint32_t dr_dx, dg_dx, db_dx;
+    union {
+        struct {
+            uint32_t dr_dx, dg_dx, db_dx, da_dx;
+            uint32_t dr_dy, dg_dy, db_dy, da_dy;
+        };
+       __m128i drgba_dx;
+       __m128i drgba_dy;
+    };
 
    uint32_t du_dy, dv_dy;
-   uint32_t dr_dy, dg_dy, db_dy;
+   uint32_t du_dx, dv_dx;
 };
 
 static INLINE int64_t MakePolyXFP(uint32_t x)
@@ -66,6 +82,9 @@ static INLINE bool CalcIDeltas(i_deltas &idl, const tri_vertex &A, const tri_ver
 
   idl.db_dx = (uint32)(CALCIS(b, y) * (1 << COORD_FBS) / denom) << COORD_POST_PADDING;
   idl.db_dy = (uint32)(CALCIS(x, b) * (1 << COORD_FBS) / denom) << COORD_POST_PADDING;
+
+  idl.da_dx = 0;
+  idl.da_dy = 0;
  }
 
  if(textured)
@@ -148,6 +167,7 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
 
   AddIDeltas_DX<goraud, textured>(ig, idl, x_ig_adjust);
   AddIDeltas_DY<goraud, textured>(ig, idl, y);
+  ig.a = 0xFF << (COORD_FBS + COORD_POST_PADDING);
 
   // Only compute timings for one every `upscale_shift` lines so that
   // we don't end up "slower" than 1x

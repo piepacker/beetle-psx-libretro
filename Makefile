@@ -107,7 +107,7 @@ ifneq (,$(findstring unix,$(platform)))
          FLAGS += -DHAVE_SHM
       endif
    endif
-   FLAGS   +=
+   FLAGS   += -mavx -mavx2 -mbmi -mbmi2
    ifeq ($(HAVE_OPENGL),1)
       ifneq (,$(findstring gles,$(platform)))
          GLES = 1
