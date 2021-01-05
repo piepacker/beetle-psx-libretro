@@ -113,8 +113,10 @@ ifneq (,$(findstring unix,$(platform)))
          GLES = 1
          GL_LIB := -lGLESv2
       else
-         GL_LIB := -lGL
+         GL_LIB := -lGL -lEGL
       endif
+   else
+         GL_LIB := -lGL -lEGL
    endif
 
 ifneq ($(findstring Linux,$(shell uname -s)),)

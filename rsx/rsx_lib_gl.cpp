@@ -2338,6 +2338,8 @@ bool rsx_gl_open(bool is_pal)
    /* No context until 'context_reset' is called */
    static_renderer.video_clock  = clock;
 
+   gl_context_reset();
+
    return true;
 }
 
@@ -2487,6 +2489,12 @@ void rsx_gl_finalize_frame(const void *fb, unsigned width,
 
    /* We can now render to the frontend's buffer */
    bind_libretro_framebuffer(renderer);
+   GLuint frontend_texture = 0;
+   glGenTextures(1, &frontend_texture);
+   glActiveTexture(GL_TEXTURE7);
+   glBindTexture(GL_TEXTURE_2D, frontend_texture);
+   glTexStorage2D(GL_TEXTURE_2D, 1,  GL_RGBA8, renderer->frontend_resolution[0], renderer->frontend_resolution[1]);
+   glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, frontend_texture, 0);
 
    glDisable(GL_SCISSOR_TEST);
    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -2556,6 +2564,15 @@ void rsx_gl_finalize_frame(const void *fb, unsigned width,
       }
    }
 
+   GLuint read_fbo = glsm_get_current_framebuffer();
+   glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
+   glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+   uint8_t* data_readback = new uint8_t[renderer->frontend_resolution[0] * renderer->frontend_resolution[1] * 4];
+	glReadPixels(0, 0, renderer->frontend_resolution[0], renderer->frontend_resolution[1],
+			GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*)data_readback);
+
+
    /* TODO - Hack: copy fb_out back into fb_texture at the end of every
     * frame to make offscreen rendering kinda sorta work. Very messy
     * and slow. */
@@ -2601,12 +2618,21 @@ void rsx_gl_finalize_frame(const void *fb, unsigned width,
 
    cleanup_gl_state();
 
+#if 1
+   video_cb(   data_readback,
+         renderer->frontend_resolution[0],
+         renderer->frontend_resolution[1], 4 * renderer->frontend_resolution[0]);
+
+   delete[] data_readback;
+   glDeleteTextures(1, &frontend_texture);
+#else
    /* When using a hardware renderer we set the data pointer to
     * -1 to notify the frontend that the frame has been rendered
     * in the framebuffer. */
    video_cb(   RETRO_HW_FRAME_BUFFER_VALID,
          renderer->frontend_resolution[0],
          renderer->frontend_resolution[1], 0);
+#endif
 }
 
 void rsx_gl_set_tex_window(uint8_t tww, uint8_t twh, uint8_t twx, uint8_t twy)

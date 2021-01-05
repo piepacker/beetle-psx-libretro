@@ -286,6 +286,7 @@ ifneq ($(HAVE_GRIFFIN), 1)
                   $(MEDNAFEN_DIR)/video/Deinterlacer.cpp \
                   $(MEDNAFEN_DIR)/video/surface.cpp \
                   $(CORE_DIR)/libretro.cpp \
+                  $(CORE_DIR)/libretro_egl.cpp \
                   $(MEDNAFEN_DIR)/mednafen-endian.cpp \
                   $(CORE_DIR)/input.cpp \
                   $(CORE_DIR)/rsx/rsx_intf.cpp

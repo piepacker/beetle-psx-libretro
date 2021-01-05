@@ -24,12 +24,16 @@
 #include <stdlib.h>
 #include <glsym/glsym.h>
 #include <glsm/glsm.h>
+#include "libretro_egl.h"
+#include <EGL/egl.h>
 
 #ifndef GL_DEPTH_CLAMP
 #define GL_DEPTH_CLAMP                    0x864F
 #define GL_RASTERIZER_DISCARD             0x8C89
 #define GL_SAMPLE_MASK                    0x8E51
 #endif
+
+static GLuint s_frontend_fbo = 0;
 
 #if 0
 extern retro_log_printf_t log_cb;
@@ -2572,6 +2576,7 @@ void rglDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
 static void glsm_state_setup(void)
 {
    unsigned i;
+   glGenFramebuffers(1, &s_frontend_fbo);
 
    gl_state.cap_translate[SGL_DEPTH_TEST]           = GL_DEPTH_TEST;
    gl_state.cap_translate[SGL_BLEND]                = GL_BLEND;
@@ -2846,6 +2851,11 @@ static bool glsm_state_ctx_init(glsm_ctx_params_t *params)
    hw_render.bottom_left_origin = true;
    hw_render.cache_context      = false;
 
+   // Shortcut
+   hw_render.get_proc_address = eglGetProcAddress;
+   setup_egl_context();
+   return true;
+
    if (!params->environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
       return false;
 
@@ -2854,7 +2864,8 @@ static bool glsm_state_ctx_init(glsm_ctx_params_t *params)
 
 GLuint glsm_get_current_framebuffer(void)
 {
-   return hw_render.get_current_framebuffer();
+	return s_frontend_fbo;
+   //return hw_render.get_current_framebuffer();
 }
 
 bool glsm_ctl(enum glsm_state_ctl state, void *data)
