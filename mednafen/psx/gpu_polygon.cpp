@@ -5,6 +5,10 @@
 #if defined(__SSE2__)
 #include <xmmintrin.h>
 #include <emmintrin.h>
+// SSE4
+#include <smmintrin.h>
+// BMI
+#include <immintrin.h>
 #endif
 
 #define COORD_FBS 12
@@ -118,6 +122,21 @@ static INLINE void AddIDeltas_DX(i_group &ig, const i_deltas &idl, uint32_t coun
 }
 
 template<bool goraud, bool textured>
+static INLINE void AddIDeltas_DX_SSE(i_group &ig, const i_deltas &idl)
+{
+   if(textured)
+   {
+      ig.u += idl.du_dx;
+      ig.v += idl.dv_dx;
+   }
+
+   if(goraud)
+   {
+	   ig.rgba = _mm_add_epi32(ig.rgba, idl.drgba_dx);
+   }
+}
+
+template<bool goraud, bool textured>
 static INLINE void AddIDeltas_DY(i_group &ig, const i_deltas &idl, uint32_t count = 1)
 {
    if(textured)
@@ -133,6 +152,14 @@ static INLINE void AddIDeltas_DY(i_group &ig, const i_deltas &idl, uint32_t coun
       ig.b += idl.db_dy * count;
    }
 }
+
+static const int16 dither_table2[4][4] =
+{
+   { -4,  0, -3,  1 },
+   {  2, -2,  3, -1 },
+   { -3,  1, -4,  0 },
+   {  3, -1,  2, -2 },
+};
 
 template<bool goraud, bool textured, int BlendMode, bool TexMult, uint32 TexMode_TA, bool MaskEval_TA, bool dither>
 static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32 x_bound, i_group ig, const i_deltas &idl)
@@ -186,11 +213,23 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
   y &= (512 << gpu->upscale_shift) - 1;
   int yx_pos = (y << (10 + gpu->upscale_shift)) | x;
 
+  // Not ideal
+  __m128i dither_table_sse[4] = {
+	  _mm_set1_epi16(dither_table2[dither_y][0]),
+	  _mm_set1_epi16(dither_table2[dither_y][1]),
+	  _mm_set1_epi16(dither_table2[dither_y][2]),
+	  _mm_set1_epi16(dither_table2[dither_y][3])
+  };
+  uint32 color_conv_mask_u32 = 0xF8F8F8;
+
   do
   {
+	  __m128i rgba = _mm_srli_epi32(ig.rgba, COORD_FBS + COORD_POST_PADDING);
+#if 0
    const uint32 r = ig.r >> (COORD_FBS + COORD_POST_PADDING);
    const uint32 g = ig.g >> (COORD_FBS + COORD_POST_PADDING);
    const uint32 b = ig.b >> (COORD_FBS + COORD_POST_PADDING);
+#endif
    // x is located on lsb of yx_pos
    uint32 dither_x = dither ? ((yx_pos >> gpu->dither_upscale_shift) & 3) : 3;
 
@@ -198,6 +237,10 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
 
    if(textured)
    {
+   const uint32 r = _mm_extract_epi32(rgba, 0);
+   const uint32 g = _mm_extract_epi32(rgba, 1);
+   const uint32 b = _mm_extract_epi32(rgba, 2);
+
 	   uint16 fbw = GetTexel<TexMode_TA>(gpu, ig.u >> (COORD_FBS + COORD_POST_PADDING), ig.v >> (COORD_FBS + COORD_POST_PADDING));
 
     if(fbw)
@@ -212,26 +255,37 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
    }
    else
    {
-    uint16 pix = 0x8000;
+    uint16 pix;
+
+	// 32->16 bits per channel
+	__m128i c = _mm_packus_epi32(rgba, rgba);
 
     if(goraud && dither)
     {
-     pix |= gpu->DitherLUT[dither_y][dither_x][r] << 0;
-     pix |= gpu->DitherLUT[dither_y][dither_x][g] << 5;
-     pix |= gpu->DitherLUT[dither_y][dither_x][b] << 10;
+		// add dither
+		c = _mm_add_epi16(c, dither_table_sse[dither_x]);
+		// clamp result to 8 bits
+		c = _mm_packus_epi16(c, c);
+		uint32 rgba8 = _mm_extract_epi32(c, 0);
+		// Convert to RGB5A1
+		pix = _pext_u32(rgba8, color_conv_mask_u32);
+		pix |= 0x8000;
     }
     else
     {
-     pix |= (r >> 3) << 0;
-     pix |= (g >> 3) << 5;
-     pix |= (b >> 3) << 10;
+		// clamp result to 8 bits
+		c = _mm_packus_epi16(c, c);
+		uint32 rgba8 = _mm_extract_epi32(c, 0);
+		// Convert to RGB5A1
+		pix = _pext_u32(rgba8, color_conv_mask_u32);
+		pix |= 0x8000;
     }
 
     PlotPixelFast<BlendMode, MaskEval_TA, false>(gpu, yx_pos, pix);
    }
 
    yx_pos++;
-   AddIDeltas_DX<goraud, textured>(ig, idl);
+   AddIDeltas_DX_SSE<goraud, textured>(ig, idl);
   } while(MDFN_LIKELY(--w > 0));
 }
 
