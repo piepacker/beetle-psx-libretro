@@ -194,7 +194,7 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
 
   AddIDeltas_DX<goraud, textured>(ig, idl, x_ig_adjust);
   AddIDeltas_DY<goraud, textured>(ig, idl, y);
-  ig.a = 0xFF << (COORD_FBS + COORD_POST_PADDING);
+  ig.a = 0x80 << (COORD_FBS + COORD_POST_PADDING);
 
   // Only compute timings for one every `upscale_shift` lines so that
   // we don't end up "slower" than 1x
@@ -211,7 +211,7 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
   uint32 dither_y = dither ? ((y >> gpu->dither_upscale_shift) & 3) : 2;
   // More Y precision bits than GPU RAM installed in (non-arcade, at least) Playstation hardware.
   y &= (512 << gpu->upscale_shift) - 1;
-  int yx_pos = (y << (10 + gpu->upscale_shift)) | x;
+  int32 yx_pos = (y << (10 + gpu->upscale_shift)) | x;
 
   // Not ideal
   __m128i dither_table_sse[4] = {
@@ -220,72 +220,90 @@ static INLINE void DrawSpan(PS_GPU *gpu, int y, const int32 x_start, const int32
 	  _mm_set1_epi16(dither_table2[dither_y][2]),
 	  _mm_set1_epi16(dither_table2[dither_y][3])
   };
-  uint32 color_conv_mask_u32 = 0xF8F8F8;
+  for (int i = 0; i < 4; i++) {
+	  // No dither for alpha
+	  dither_table_sse[i] = _mm_insert_epi16(dither_table_sse[i], 0, 3);
+  }
+
+  const uint32 color_conv_mask_u32 = 0x80F8F8F8;
+  //const uint64 color_conv_mask_u64 = 0x8000F800F800F8;
+  const __m128i zero = _mm_xor_si128(zero, zero);
+  uint32 dither_mask = 3 << gpu->dither_upscale_shift;
 
   do
   {
+	  // Shift color (32 bits per channel)
 	  __m128i rgba = _mm_srli_epi32(ig.rgba, COORD_FBS + COORD_POST_PADDING);
-#if 0
-   const uint32 r = ig.r >> (COORD_FBS + COORD_POST_PADDING);
-   const uint32 g = ig.g >> (COORD_FBS + COORD_POST_PADDING);
-   const uint32 b = ig.b >> (COORD_FBS + COORD_POST_PADDING);
-#endif
-   // x is located on lsb of yx_pos
-   uint32 dither_x = dither ? ((yx_pos >> gpu->dither_upscale_shift) & 3) : 3;
+	  // 32->16 bits per channel
+	  __m128i c = _mm_packus_epi32(rgba, rgba);
 
-   //assert(x >= ClipX0 && x <= ClipX1);
+	  // x is located on lsb of yx_pos
+	  uint32 dither_x = dither ? ((yx_pos >> gpu->dither_upscale_shift) & 3) : 3;
 
-   if(textured)
-   {
-   const uint32 r = _mm_extract_epi32(rgba, 0);
-   const uint32 g = _mm_extract_epi32(rgba, 1);
-   const uint32 b = _mm_extract_epi32(rgba, 2);
+	  //assert(x >= ClipX0 && x <= ClipX1);
 
-	   uint16 fbw = GetTexel<TexMode_TA>(gpu, ig.u >> (COORD_FBS + COORD_POST_PADDING), ig.v >> (COORD_FBS + COORD_POST_PADDING));
+	  if(textured)
+	  {
+		  // TODO: xy offset of the texture can be computed once.
+		  // TODO2: window 'and' can likely be skipped most of the time (template fast path?)
+		  uint16 fbw = GetTexel<TexMode_TA>(gpu, ig.u >> (COORD_FBS + COORD_POST_PADDING), ig.v >> (COORD_FBS + COORD_POST_PADDING));
 
-    if(fbw)
-    {
-     if(TexMult)
-     {
-      uint8_t *dither_offset = gpu->DitherLUT[dither_y][dither_x];
-      fbw = ModTexel(dither_offset, fbw, r, g, b);
-     }
-     PlotPixelFast<BlendMode, MaskEval_TA, true>(gpu, yx_pos, fbw);
-    }
-   }
-   else
-   {
-    uint16 pix;
+		  if(fbw)
+		  {
+			  if(TexMult)
+			  {
+				  // Convert to 8 bits per channel
+				  uint32 t_rgba = _pdep_u32(fbw, color_conv_mask_u32);
+				  __m128i t;
+				  t = _mm_insert_epi32(t, t_rgba, 0);
+				  // Upgrade to 16 bits per channel
+				  t = _mm_unpacklo_epi8(t, zero);
+				  // T * F >> 7
+				  c = _mm_mullo_epi16(t, c);
+				  c = _mm_srli_epi16(c, 7);
+				  // add dither
+				  c = _mm_add_epi16(c, dither_table_sse[dither_x]);
+				  // get back to 8 bits with clamping
+				  c = _mm_packus_epi16(c, c);
+				  // Get back to scalar unit
+				  uint32 rgba8 = _mm_extract_epi32(c, 0);
+				  // Convert to RGB5A1
+				  fbw = _pext_u32(rgba8, color_conv_mask_u32);
+			  }
+			  PlotPixelFast<BlendMode, MaskEval_TA, true>(gpu, yx_pos, fbw);
+		  }
+	  }
+	  else
+	  {
+		  uint16 pix;
+		  if(goraud && dither)
+		  {
+			  // add dither
+			  c = _mm_add_epi16(c, dither_table_sse[dither_x]);
+			  // get back to 8 bits with clamping
+			  c = _mm_packus_epi16(c, c);
+			  // Get back to scalar unit
+			  uint32 rgba8 = _mm_extract_epi32(c, 0);
+			  // Convert to RGB5A1
+			  pix = _pext_u32(rgba8, color_conv_mask_u32);
+			  //pix |= 0x8000; // Could be useless if we are clever with the alpha of the fragment color
+		  }
+		  else
+		  {
+			  // get back to 8 bits with clamping
+			  c = _mm_packus_epi16(c, c);
+			  // Get back to scalar unit
+			  uint32 rgba8 = _mm_extract_epi32(c, 0);
+			  // Convert to RGB5A1
+			  pix = _pext_u32(rgba8, color_conv_mask_u32);
+			  //pix |= 0x8000;
+		  }
 
-	// 32->16 bits per channel
-	__m128i c = _mm_packus_epi32(rgba, rgba);
+		  PlotPixelFast<BlendMode, MaskEval_TA, false>(gpu, yx_pos, pix);
+	  }
 
-    if(goraud && dither)
-    {
-		// add dither
-		c = _mm_add_epi16(c, dither_table_sse[dither_x]);
-		// clamp result to 8 bits
-		c = _mm_packus_epi16(c, c);
-		uint32 rgba8 = _mm_extract_epi32(c, 0);
-		// Convert to RGB5A1
-		pix = _pext_u32(rgba8, color_conv_mask_u32);
-		pix |= 0x8000;
-    }
-    else
-    {
-		// clamp result to 8 bits
-		c = _mm_packus_epi16(c, c);
-		uint32 rgba8 = _mm_extract_epi32(c, 0);
-		// Convert to RGB5A1
-		pix = _pext_u32(rgba8, color_conv_mask_u32);
-		pix |= 0x8000;
-    }
-
-    PlotPixelFast<BlendMode, MaskEval_TA, false>(gpu, yx_pos, pix);
-   }
-
-   yx_pos++;
-   AddIDeltas_DX_SSE<goraud, textured>(ig, idl);
+	  yx_pos++;
+	  AddIDeltas_DX_SSE<goraud, textured>(ig, idl);
   } while(MDFN_LIKELY(--w > 0));
 }
 
