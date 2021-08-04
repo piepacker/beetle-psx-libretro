@@ -3,4 +3,4 @@
 	url = https://github.com/piepacker/libpsdisc
 [submodule "icystdlib"]
 	path = icystdlib
-	url = https://github.com/jstine35/icystdlib
+	url = https://github.com/piepacker/icystdlib

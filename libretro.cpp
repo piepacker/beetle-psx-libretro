@@ -1198,6 +1198,7 @@ static bool g_dbg_WasAttached = false;
 // returns 1 if OK to proceed execution.
 // returns 0 if waiting for debugger to attach.
 bool retro_debug_attach() {
+#ifdef _WIN32
    bool hasMswDebugger = ::IsDebuggerPresent();
    g_dbg_WasAttached = g_dbg_WasAttached || hasMswDebugger;        // track it, because if debugger detaches, the process may close itself...
 
@@ -1228,6 +1229,9 @@ bool retro_debug_attach() {
    }
    retro_attach_log = 0;
    return 1;
+#else
+   return 1;
+#endif
 }
 
 // FIXME: Add PSX_Reset() and FrontIO::Reset() so that emulated input devices don't get power-reset on reset-button reset.
@@ -2032,6 +2036,7 @@ static void InitCommon(std::vector<CDIF *> *_CDInterfaces, const bool EmulateMem
    MDFNMP_AddRAM(1024, 0x1F800000, ScratchRAM.data8);
 #endif
 
+#if 0
    RFILE *BIOSFile;
 
    if(firmware_is_present(region))
@@ -2066,6 +2071,7 @@ static void InitCommon(std::vector<CDIF *> *_CDInterfaces, const bool EmulateMem
          filestream_read(BIOSFile, BIOSROM->data8, 512 * 1024);
          filestream_close(BIOSFile);
       }
+#endif
 
    i = 0;
 

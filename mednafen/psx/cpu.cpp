@@ -140,7 +140,7 @@ void PS_CPU::SetFastMap(void *region_mem, uint32 region_address, uint32 region_s
  }
 }
 
-INLINE void PS_CPU::RecalcIPCache(void)
+/*INLINE*/ void PS_CPU::RecalcIPCache(void)
 {
  IPCache = 0;
 
