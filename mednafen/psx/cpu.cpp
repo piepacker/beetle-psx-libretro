@@ -30,9 +30,9 @@
 #include "../mednafen-endian.h"
 
 // iCB: PGXP STUFF
-#include "../pgxp/pgxp_cpu.h"
-#include "../pgxp/pgxp_gte.h"
-#include "../pgxp/pgxp_main.h"
+#include "../../pgxp/pgxp_cpu.h"
+#include "../../pgxp/pgxp_gte.h"
+#include "../../pgxp/pgxp_main.h"
 int pgxpMode = PGXP_GetModes();
 
 #ifdef HAVE_LIGHTREC
@@ -48,12 +48,15 @@ extern uint8 psx_mmap;
 static struct lightrec_state *lightrec_state;
 #endif
 
+#include <set>
+std::set<uint32_t> s_blocks_visited;    // for informative block trace.
+
 extern bool psx_gte_overclock;
 pscpu_timestamp_t PS_CPU::next_event_ts;
 uint32 PS_CPU::IPCache;
 uint32 PS_CPU::BIU;
 bool PS_CPU::Halted;
-struct PS_CPU::CP0 PS_CPU::CP0;
+struct PS_CPU::CP0_t PS_CPU::CP0;
 char PS_CPU::cache_buf[64 * 1024];
 
 #if 0
@@ -137,7 +140,7 @@ void PS_CPU::SetFastMap(void *region_mem, uint32 region_address, uint32 region_s
  }
 }
 
-INLINE void PS_CPU::RecalcIPCache(void)
+/*INLINE*/ void PS_CPU::RecalcIPCache(void)
 {
  IPCache = 0;
 
@@ -365,7 +368,7 @@ void PS_CPU::PokeMemory(uint32 address, T value)
 }
 
 template<typename T>
-INLINE T PS_CPU::ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool DS24, bool LWC_timing)
+INLINE T PS_CPU::_ReadMemory_untraced(pscpu_timestamp_t &timestamp, uint32 address, bool DS24, bool LWC_timing)
 {
  T ret;
 
@@ -412,16 +415,16 @@ INLINE T PS_CPU::ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool D
  //
  //
 
- address &= addr_mask[address >> 29];
+ auto masked_addr = address & addr_mask[address >> 29];
 
- if(address >= 0x1F800000 && address <= 0x1F8003FF)
+ if(masked_addr >= 0x1F800000 && masked_addr <= 0x1F8003FF)
  {
   LDAbsorb = 0;
 
   if(DS24)
-   return ScratchRAM->ReadU24(address & 0x3FF);
+   return ScratchRAM->ReadU24(masked_addr & 0x3FF);
   else
-   return ScratchRAM->Read<T>(address & 0x3FF);
+   return ScratchRAM->Read<T>(masked_addr & 0x3FF);
  }
 
  timestamp += (ReadFudge >> 4) & 2;
@@ -431,15 +434,15 @@ INLINE T PS_CPU::ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool D
  pscpu_timestamp_t lts = timestamp;
 
  if(sizeof(T) == 1)
-  ret = PSX_MemRead8(lts, address);
+  ret = PSX_MemRead8(lts, masked_addr);
  else if(sizeof(T) == 2)
-  ret = PSX_MemRead16(lts, address);
+  ret = PSX_MemRead16(lts, masked_addr);
  else
  {
   if(DS24)
-   ret = PSX_MemRead24(lts, address) & 0xFFFFFF;
+   ret = PSX_MemRead24(lts, masked_addr) & 0xFFFFFF;
   else
-   ret = PSX_MemRead32(lts, address);
+   ret = PSX_MemRead32(lts, masked_addr);
  }
 
  if(LWC_timing)
@@ -454,7 +457,20 @@ INLINE T PS_CPU::ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool D
 }
 
 template<typename T>
-INLINE void PS_CPU::WriteMemory(pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24)
+INLINE T PS_CPU::ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool DS24, bool LWC_timing) {
+ auto result = _ReadMemory_untraced<T>(timestamp, address, DS24, LWC_timing);
+ printf("[MEM] load%d%s  @ %08x --> %08x (%d)\n", (int)sizeof(T) * 8, sizeof(T)==1 ? " " : "", address, result, result);
+ return result;
+}
+
+template<typename T>
+INLINE void PS_CPU::WriteMemory(pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24) {
+ printf("[MEM] store%d%s @ %08x <-- %08x (%d)\n", (int)sizeof(T) * 8, sizeof(T)==1 ? " " : "", address, value, value);
+ _WriteMemory_untraced<T>(timestamp, address, value, DS24);
+}
+
+template<typename T>
+INLINE void PS_CPU::_WriteMemory_untraced(pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24)
 {
  if(MDFN_LIKELY(!(CP0.SR & 0x10000)))
  {
@@ -607,20 +623,25 @@ uint32 NO_INLINE PS_CPU::Exception(uint32 code, uint32 PC, const uint32 NP, cons
 {
  uint32 handler = 0x80000080;
 
- assert(code < 16);
-
-#ifdef DEBUG
- if(code != EXCEPTION_INT && code != EXCEPTION_BP && code != EXCEPTION_SYSCALL)
+ static const char* exmne[16] =
  {
-  static const char* exmne[16] =
-  {
-   "INT", "MOD", "TLBL", "TLBS", "ADEL", "ADES", "IBE", "DBE", "SYSCALL", "BP", "RI", "COPU", "OV", NULL, NULL, NULL
-  };
+  "INT", "MOD", "TLBL", "TLBS", "ADEL", "ADES", "IBE", "DBE", "SYSCALL", "BP", "RI", "COPU", "OV", NULL, NULL, NULL
+ };
 
+ if(code != EXCEPTION_INT && code != EXCEPTION_BP && code != EXCEPTION_SYSCALL) {
   PSX_DBG(PSX_DBG_WARNING, "[CPU] Exception %s(0x%02x) @ PC=0x%08x(NP=0x%08x, BDBT=0x%02x), Instr=0x%08x, IPCache=0x%02x, CAUSE=0x%08x, SR=0x%08x, IRQC_Status=0x%04x, IRQC_Mask=0x%04x\n",
-	exmne[code], code, PC, NP, BDBT, instr, IPCache, CP0.CAUSE, CP0.SR, IRQ_GetRegister(IRQ_GSREG_STATUS, NULL, 0), IRQ_GetRegister(IRQ_GSREG_MASK, NULL, 0));
+    exmne[code], code, PC, NP, BDBT, instr, IPCache, CP0.CAUSE, CP0.SR, IRQ_GetRegister(IRQ_GSREG_STATUS, NULL, 0), IRQ_GetRegister(IRQ_GSREG_MASK, NULL, 0));
  }
-#endif
+ else {
+  PSX_DBG(PSX_DBG_WARNING, "[CPU] Exception %s(0x%02x) @ PC=%08x(BDBT=%d), CAUSE=%08x, SR=%08x, IRQC_Status=%04x, IRQC_Mask=%04x\n",
+    exmne[code], code, PC, BDBT, CP0.CAUSE, CP0.SR, IRQ_GetRegister(IRQ_GSREG_STATUS, NULL, 0), IRQ_GetRegister(IRQ_GSREG_MASK, NULL, 0));
+ }
+
+ fflush(nullptr);
+ assert(code < 16);
+ assert(code == 0x8 || code == 0);
+ 
+ //assert(BDBT < 2);
 
  if(CP0.SR & (1 << 22))	// BEV
   handler = 0xBFC00180;
@@ -628,8 +649,11 @@ uint32 NO_INLINE PS_CPU::Exception(uint32 code, uint32 PC, const uint32 NP, cons
  CP0.EPC = PC;
  if(BDBT & 2)
  {
+  // TAR is the esoteric JUMPDEST register of PSX. Originally just for internal dev/debug purposes
+  // by the SOC designers, and thing should ever depend on it. --jstine
+
   CP0.EPC -= 4;
-  CP0.TAR = NP;
+  CP0.TAR = NP; 
  }
 
  if(ADDBT)
@@ -641,6 +665,10 @@ uint32 NO_INLINE PS_CPU::Exception(uint32 code, uint32 PC, const uint32 NP, cons
  // Setup cause register
  CP0.CAUSE &= 0x0000FF00;
  CP0.CAUSE |= code << 2;
+
+ // BDBT = Branch Delay / Branch Taken. BranchDelay is biit 31 of CAUSE, BranchTaken is some mednafen hack
+ // being imposed on a reserved bit of CAUSE (bit 30). Why I have no idea, there's never a need to know
+ // whether a branch is taken or not if your emulator is handling branch delays correctly. --jstine
 
  CP0.CAUSE |= BDBT << 30;
  CP0.CAUSE |= (instr << 2) & (0x3 << 28);	// CE
@@ -674,6 +702,18 @@ uint32 NO_INLINE PS_CPU::Exception(uint32 code, uint32 PC, const uint32 NP, cons
 #define GPR_DEP(n) { unsigned tn = (n); ReadAbsorb[tn] = 0; EXP_ILL_CHECK(if(LDWhich > 0 && LDWhich < 0x20 && LDWhich == tn) { PSX_DBG(PSX_DBG_WARNING, "[CPU] Instruction at PC=0x%08x in load delay slot has dependency on load target register(0x%02x): SR=0x%08x\n", PC, LDWhich, CP0.SR); }) }
 #define GPR_RES(n) { unsigned tn = (n); ReadAbsorb[tn] = 0; }
 #define GPR_DEPRES_END ReadAbsorb[0] = back; }
+
+static void trace_log_block(uint32_t new_PC) {
+  const char* newish = " (new)";
+  if (s_blocks_visited.find(new_PC & 0x1fffffff) != s_blocks_visited.end()) { 
+    newish = "";
+  }
+  else {
+    s_blocks_visited.insert(new_PC & 0x1fffffff);
+  }
+  printf("[BLOCK] %06X%s\n", new_PC & 0x1fffffff, newish);
+  fflush(nullptr);
+}
 
 template<bool DebugMode, bool BIOSPrintMode, bool ILHMode>
 pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
@@ -726,6 +766,27 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
    }
 #endif
 
+   #define DO_LDS() { GPR[LDWhich] = LDValue; ReadAbsorb[LDWhich] = LDAbsorb; ReadFudge = LDWhich; ReadAbsorbWhich |= LDWhich & 0x1F; LDWhich = 0x20; }
+   #define BEGIN_OPF(name) { op_##name:
+   #define END_OPF goto OpDone; }
+
+extern bool HleTestCall(u32 pc);
+extern bool HleDispatchCall(u32 pc);
+
+    if (HleTestCall(PC)) {
+      DO_LDS();
+
+      BACKED_PC = PC;
+      if (HleDispatchCall(PC)) {
+          //PC = GPR[31]; //BACKED_PC;
+          assert(BACKED_PC != PC);    // happens if the caller forgot to set pc = ra or similar.
+          PC = BACKED_PC;
+          new_PC = PC + 4;
+          trace_log_block(PC);
+          continue;
+      }
+    }
+
 #if NOT_LIBRETRO
    if(BIOSPrintMode)
    {
@@ -752,7 +813,7 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
    }
 
    instr = ReadInstruction(timestamp, PC);
-
+   //printf("[INSN] %06X:%08X\n", PC & 0x1fff'ffff, instr);
 
    // 
    // Instruction decode
@@ -768,10 +829,6 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
     ReadAbsorb[ReadAbsorbWhich]--;
    else
     timestamp++;
-
-   #define DO_LDS() { GPR[LDWhich] = LDValue; ReadAbsorb[LDWhich] = LDAbsorb; ReadFudge = LDWhich; ReadAbsorbWhich |= LDWhich & 0x1F; LDWhich = 0x20; }
-   #define BEGIN_OPF(name) { op_##name:
-   #define END_OPF goto OpDone; }
 
 #ifdef DEBUG
 #define DEBUG_ADDBT() if(DebugMode && ADDBT) { ADDBT(PC, new_PC, false); }
@@ -1261,9 +1318,7 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
 		 const uint32 immediate = (int32)(int16)(instr & 0xFFFF);
 		 const bool result = (false == (bool)(instr & (1U << 16)));
 
-#ifdef DEBUG
 		 PSX_DBG(PSX_DBG_WARNING, "[CPU] BC0x instruction(0x%08x) @ PC=0x%08x\n", instr, PC);
-#endif
 
 		 DO_BRANCH(result, (immediate << 2), ~0U, false, 0);
 		}
@@ -1387,9 +1442,7 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
 		 const uint32 immediate = (int32)(int16)(instr & 0xFFFF);
 		 const bool result = (false == (bool)(instr & (1U << 16)));
 
-#ifdef DEBUG
 		 PSX_DBG(PSX_DBG_WARNING, "[CPU] BC2x instruction(0x%08x) @ PC=0x%08x\n", instr, PC);
-#endif
 
 		 DO_BRANCH(result, (immediate << 2), ~0U, false, 0);
 		}
@@ -1420,9 +1473,7 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
 	{
 	 const uint32 sub_op = (instr >> 21) & 0x1F;
 
-#ifdef DEBUG
 	 PSX_DBG(PSX_DBG_WARNING, "[CPU] COP%u instruction(0x%08x) @ PC=0x%08x\n", (instr >> 26) & 0x3, instr, PC);
-#endif
 
 	 if(sub_op == 0x08 || sub_op == 0x0C)
 	 {
@@ -1456,9 +1507,7 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
 	 }
          else
 	 {
-#ifdef DEBUG
 	  PSX_DBG(PSX_DBG_WARNING, "[CPU] LWC%u instruction(0x%08x) @ PC=0x%08x\n", (instr >> 26) & 0x3, instr, PC);
-#endif
 
           ReadMemory<uint32>(timestamp, address, false, true);
 	 }
@@ -1514,13 +1563,11 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
 	  CP0.BADA = address;
 	  new_PC = Exception(EXCEPTION_ADES, PC, new_PC, instr);
 	 }
-#ifdef DEBUG
 	 else
 	 {
 	  PSX_DBG(PSX_DBG_WARNING, "[CPU] SWC%u instruction(0x%08x) @ PC=0x%08x\n", (instr >> 26) & 0x3, instr, PC);
 	  //WriteMemory<uint32>(timestamp, address, SOMETHING);
 	 }
-#endif
 	}
     END_OPF;
 
@@ -2678,6 +2725,9 @@ pscpu_timestamp_t PS_CPU::RunReal(pscpu_timestamp_t timestamp_in)
    }
 
    OpDone: ;
+   if (BDBT) {
+    trace_log_block(new_PC);
+   }
    PC = new_PC;
    new_PC = new_PC + 4;
    BDBT = 0;

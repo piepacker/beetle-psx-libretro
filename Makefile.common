@@ -291,8 +291,24 @@ ifneq ($(HAVE_GRIFFIN), 1)
                   $(CORE_DIR)/rsx/rsx_intf.cpp
 
    SOURCES_C +=   \
-						$(MEDNAFEN_DIR)/settings.c \
+                  $(MEDNAFEN_DIR)/settings.c \
                   $(MEDNAFEN_DIR)/state.c
+
+   CXXFLAGS += -std=c++17
+   LDFLAGS  += -lstdc++fs
+
+   INCFLAGS += -I$(CORE_DIR)/libpsdisc/inc
+   INCFLAGS += -I$(CORE_DIR)/icystdlib/inc
+   INCFLAGS += -I$(CORE_DIR)/icystdlib/icy-app-glue
+   INCFLAGS += -include fi-platform-defines.h -include fi-printf-redirect.h
+
+   SOURCES_CXX += $(CORE_DIR)/hle/psxbios.cpp \
+                  $(CORE_DIR)/hle/psxhle-filesystem.cpp \
+                  $(CORE_DIR)/icystdlib/src/fs.cpp \
+                  $(CORE_DIR)/icystdlib/src/filesystem.msw.cpp \
+                  $(CORE_DIR)/icystdlib/src/posix_file.cpp \
+                  $(CORE_DIR)/libpsdisc/src/psdisc-filesystem-ecma-119.cpp \
+                  $(CORE_DIR)/libpsdisc/src/psdisc-cdvd-image.cpp
 
    ifneq ($(RSX_DUMP),)
       SOURCES_CXX += $(CORE_DIR)/rsx/rsx_dump.cpp

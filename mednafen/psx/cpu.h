@@ -110,7 +110,7 @@ class PS_CPU
  void lightrec_plugin_clear(uint32 addr, uint32 size);
 #endif
 
- private:
+ public:
 
  uint32 GPR[32 + 1];	// GPR[32] Used as dummy in load delay simulation(indexing past the end of real GPR)
 
@@ -159,7 +159,7 @@ class PS_CPU
   CP0REG_PRID = 15		// Product ID
  };
 
- static struct CP0
+ static struct CP0_t
  {
   union
   {
@@ -235,8 +235,11 @@ class PS_CPU
 
  template<typename T> T PeekMemory(uint32 address) MDFN_COLD;
  template<typename T> void PokeMemory(uint32 address, T value) MDFN_COLD;
- template<typename T> T ReadMemory(pscpu_timestamp_t &timestamp, uint32 address, bool DS24 = false, bool LWC_timing = false);
- template<typename T> void WriteMemory(pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24 = false);
+ template<typename T> T ReadMemory          (pscpu_timestamp_t &timestamp, uint32 address, bool DS24 = false, bool LWC_timing = false);
+ template<typename T> T _ReadMemory_untraced(pscpu_timestamp_t &timestamp, uint32 address, bool DS24 = false, bool LWC_timing = false);
+
+ template<typename T> void WriteMemory          (pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24 = false);
+ template<typename T> void _WriteMemory_untraced(pscpu_timestamp_t &timestamp, uint32 address, uint32 value, bool DS24 = false);
 
  uint32 ReadInstruction(pscpu_timestamp_t &timestamp, uint32 address);
 

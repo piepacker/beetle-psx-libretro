@@ -7,15 +7,27 @@
 #include "../mednafen-types.h"
 #include "../video/surface.h"
 
+#if !defined(PSX_DBGPRINT_ENABLE)
+# define PSX_DBGPRINT_ENABLE 1
+#endif
+
+#if !defined(PSX_EVENT_SYSTEM_CHECKS)
+# define PSX_EVENT_SYSTEM_CHECKS 1
+#endif
+
+
 // Comment out these 2 defines for extra speeeeed.
 #define PSX_DBGPRINT_ENABLE    1
 #define PSX_EVENT_SYSTEM_CHECKS 1
 
 // It's highly unlikely the user will want these if they're intentionally compiling without the debugger.
-#ifndef WANT_DEBUGGER
-#undef PSX_DBGPRINT_ENABLE
-#undef PSX_EVENT_SYSTEM_CHECKS
-#endif
+// Thanks, but this this stupid. If the DEVELOPER wants to undef something, they can undef something
+// themselves. Devs should know how to do basic build config. Users have nothing to do with this equation. --jstine
+
+//#ifndef WANT_DEBUGGER
+//#undef PSX_DBGPRINT_ENABLE
+//#undef PSX_EVENT_SYSTEM_CHECKS
+//#endif
 
 #define PSX_DBG_ERROR      0  // Emulator-level error.
 #define PSX_DBG_WARNING    1  // Warning about game doing questionable things/hitting stuff that might not be emulated correctly.
@@ -24,10 +36,10 @@
 #define PSX_DBG_FLOOD      4  // Heavy informational debug messages(GPU commands; TODO).
 
 #if PSX_DBGPRINT_ENABLE
-void PSX_DBG(unsigned level, const char *format, ...);
+#define PSX_DBG(level, format, ...) (((level) <= PSX_DBG_BIOS_PRINT) && printf(format "", ## __VA_ARGS__))
 
-#define PSX_WARNING(format, ...) { PSX_DBG(PSX_DBG_WARNING, format "\n", ## __VA_ARGS__); }
-#define PSX_DBGINFO(format, ...) { }
+#define PSX_WARNING(format, ...) ( PSX_DBG(PSX_DBG_WARNING, format "\n", ## __VA_ARGS__) )
+#define PSX_DBGINFO(format, ...) (void(0))
 #else
 static void PSX_DBG(unsigned level, const char* format, ...) { }
 static void PSX_WARNING(const char* format, ...) { }
